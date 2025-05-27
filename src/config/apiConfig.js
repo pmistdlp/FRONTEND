@@ -1,5 +1,5 @@
 const getBaseURL = async () => {
-  const SERVER_URL = 'https://mooc-backend-1.onrender.com';
+  const SERVER_URL = 'https://mooc-backend-1wg6.onrender.com';
   const LOCAL_URL = 'http://localhost:3000';
 
   console.log('NODE_ENV:', process.env.NODE_ENV); // Debug environment

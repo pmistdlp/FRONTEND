@@ -23,7 +23,7 @@ async function initializeAxios() {
     axios.defaults.baseURL = baseURL;
   } catch (error) {
     console.warn('Failed to resolve baseURL, falling back to server URL:', error);
-    axios.defaults.baseURL = 'https://mooc-backend-1.onrender.com';
+    axios.defaults.baseURL = 'https://mooc-backend-1wg6.onrender.com';
   }
   app.use(router);
   app.mount('#app');

@@ -6,7 +6,7 @@ module.exports = {
         changeOrigin: true,
       },
       '/ping': {
-        target: 'https://mooc-backend-1.onrender.com',
+        target: 'https://mooc-backend-1wg6.onrender.com',
         changeOrigin: true,
       },
     },
