@@ -1,7 +1,7 @@
 <template>
-  <div class="flex h-screen bg-white text-gray-800 font-sans antialiased border-r border-gray-200">
+  <div class="flex h-screen bg-white text-gray-800 font-sans antialiased">
     <!-- Sidebar -->
-    <div class="w-64 bg-white shadow-md flex flex-col border-r border-gray-200">
+    <div v-if="!isExamActive" class="w-64 bg-white shadow-md flex flex-col border-r border-gray-200">
       <div class="p-6">
         <h1 class="text-2xl font-bold text-indigo-600">Student Dashboard</h1>
       </div>
@@ -47,14 +47,14 @@
     </div>
 
     <!-- Main Content -->
-    <div class="flex-1 p-6 md:p-10 overflow-y-auto">
+    <div class="flex-1 overflow-y-auto" :class="{ 'p-6 md:p-10': !isExamActive, 'p-0': isExamActive }">
       <!-- Loading State -->
-      <div v-if="isLoading" class="bg-white p-6 rounded-lg shadow-md border border-gray-200 text-center">
+      <div v-if="isLoading && !isExamActive" class="bg-white p-6 rounded-lg shadow-md border border-gray-200 text-center">
         <p class="text-gray-600">Loading...</p>
       </div>
 
       <!-- Error State -->
-      <div v-else-if="errorMessage" class="bg-red-50 p-6 rounded-lg shadow-md border border-red-200">
+      <div v-else-if="errorMessage && !isExamActive" class="bg-red-50 p-6 rounded-lg shadow-md border border-red-200">
         <p class="text-red-600">{{ errorMessage }}</p>
       </div>
 
@@ -64,14 +64,14 @@
         :courses="courses"
         :is-exam-active="isExamActive"
         :user="user"
-        @start-exam="handleStartExam"
         @show-message="showModal"
         @exam-status-changed="updateExamStatus"
+        @toggle-dashboard="toggleDashboard"
       />
 
       <!-- Profile -->
       <Profile
-        v-else-if="activeSection === 'profile'"
+        v-else-if="activeSection === 'profile' && !isExamActive"
         :user="user"
         @logout="handleLogout"
         @profile-updated="handleProfileUpdate"
@@ -250,21 +250,13 @@ export default {
         window.location.href = this.examLink;
       }
     },
-    handleStartExam(course) {
-      const examPath = `/exam/${course.id}/${encodeURIComponent(course.name)}`;
-      console.log('Attempting to navigate to Exam with path:', examPath);
-      this.$router.push(examPath)
-        .catch(err => {
-          console.error('Navigation error:', err.message);
-          this.showModal(
-            'Failed to navigate to the exam page automatically. Click the link below to proceed.',
-            examPath
-          );
-        });
-    },
     updateExamStatus(isActive) {
       this.isExamActive = isActive;
       console.log('Exam status updated:', this.isExamActive);
+    },
+    toggleDashboard(isExamActive) {
+      this.isExamActive = isExamActive;
+      console.log('Dashboard visibility toggled, isExamActive:', isExamActive);
     },
     showLogoutModal() {
       this.showLogoutModalFlag = true;
@@ -275,10 +267,8 @@ export default {
     },
     async handleLogout() {
       try {
-        // Call backend logout endpoint to clear server-side session
         const response = await axios.post('/api/logout', {}, { withCredentials: true });
         console.log('Logout response:', response.data);
-        // Clear local storage and session data
         localStorage.removeItem('user');
         this.courses = [];
         this.profilePhoto = null;
