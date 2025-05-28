@@ -1,9 +1,16 @@
-```vue
 <template>
   <div class="space-y-6 p-4 bg-white text-gray-800">
+    <!-- Generic Loading Spinner -->
     <div v-if="isLoading" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
       <div class="animate-spin rounded-full h-12 w-12 border-t-4 border-blue-500 border-solid"></div>
       <p class="text-white ml-4">Processing...</p>
+    </div>
+    <!-- Saving Animation -->
+    <div v-if="isSaving" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
+      <div class="flex items-center space-x-3 bg-white p-4 rounded-lg shadow-lg">
+        <div class="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-green-500"></div>
+        <p class="text-gray-800 font-semibold">Saving Status Updates...</p>
+      </div>
     </div>
 
     <h2 class="text-2xl font-bold transition-all duration-300 hover:text-blue-600">Admin Enrollments Dashboard</h2>
@@ -21,12 +28,44 @@
 
     <div v-if="selectedCourseId" class="bg-gray-50 p-4 rounded-lg shadow-sm border border-gray-200">
       <h3 class="text-base font-semibold text-blue-500 mb-4">Enrolled Students for Selected Course</h3>
+      <!-- Search Box -->
+      <div class="mb-4 flex items-center space-x-2">
+        <div class="relative flex-1">
+          <input 
+            v-model="searchQuery" 
+            type="text" 
+            placeholder="Search by name or register number..." 
+            class="w-full px-3 py-2 pl-10 border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 text-sm transition-all duration-200"
+            aria-label="Search students"
+          />
+          <svg class="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <button 
+            v-if="searchQuery" 
+            @click="searchQuery = ''" 
+            class="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            aria-label="Clear search"
+          >
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
       <div class="overflow-x-auto">
         <table class="min-w-full bg-white border border-gray-200 rounded-md text-sm">
           <thead class="bg-gray-100">
             <tr>
               <th class="py-2 px-3 text-left text-gray-600 font-semibold border-b border-gray-200">
-                <input type="checkbox" v-model="selectAllStudents" @change="toggleSelectAllStudents" class="h-4 w-4 rounded-full" />
+                <input 
+                  type="checkbox" 
+                  :checked="selectAllStudents" 
+                  :indeterminate.prop="isIndeterminate" 
+                  @change="toggleSelectAllStudents" 
+                  class="h-4 w-4 rounded-full" 
+                  aria-label="Select all students and mark as eligible and paid"
+                />
               </th>
               <th class="py-2 px-3 text-left text-gray-600 font-semibold border-b border-gray-200">Name</th>
               <th class="py-2 px-3 text-left text-gray-600 font-semibold border-b border-gray-200">Register No</th>
@@ -40,9 +79,15 @@
           </thead>
           <tbody>
             <transition-group name="list">
-              <tr v-for="student in enrolledStudents" :key="student.id" class="hover:bg-gray-50 transition-all duration-200">
+              <tr v-for="student in filteredStudents" :key="student.id" class="hover:bg-gray-50 transition-all duration-200">
                 <td class="py-2 px-3 border-b border-gray-200">
-                  <input type="checkbox" v-model="selectedStudentIds" :value="student.id" class="h-4 w-4 rounded-full" />
+                  <input 
+                    type="checkbox" 
+                    v-model="selectedStudentIds" 
+                    :value="student.id" 
+                    class="h-4 w-4 rounded-full" 
+                    aria-label="Select student"
+                  />
                 </td>
                 <td class="py-2 px-3 border-b border-gray-200">{{ student.name }}</td>
                 <td class="py-2 px-3 border-b border-gray-200">{{ student.registerNo }}</td>
@@ -50,15 +95,28 @@
                 <td class="py-2 px-3 border-b border-gray-200">{{ student.aadharNumber || '-' }}</td>
                 <td class="py-2 px-3 border-b border-gray-200">{{ student.abcId || '-' }}</td>
                 <td class="py-2 px-3 border-b border-gray-200">
-                  <input type="checkbox" v-model="student.isEligible" class="h-4 w-4 rounded-full" />
+                  <input 
+                    type="checkbox" 
+                    v-model="student.isEligible" 
+                    class="h-4 w-4 rounded-full" 
+                    aria-label="Toggle eligibility"
+                  />
                 </td>
                 <td class="py-2 px-3 border-b border-gray-200">
-                  <input type="checkbox" v-model="student.paymentConfirmed" class="h-4 w-4 rounded-full" />
+                  <input 
+                    type="checkbox" 
+                    v-model="student.paymentConfirmed" 
+                    class="h-4 w-4 rounded-full" 
+                    aria-label="Toggle payment confirmation"
+                  />
                 </td>
                 <td class="py-2 px-3 border-b border-gray-200">
-                  <button @click="downloadHallTicketForStudent(student.id)" 
-                          :disabled="!student.isEligible || !student.paymentConfirmed"
-                          class="bg-indigo-500 text-white px-3 py-1 rounded-md hover:bg-indigo-600 disabled:bg-gray-400 transition-all duration-200 text-xs">
+                  <button 
+                    @click="downloadHallTicketForStudent(student.id)" 
+                    :disabled="!student.isEligible || !student.paymentConfirmed || isDownloading"
+                    class="bg-indigo-500 text-white px-3 py-1 rounded-md hover:bg-indigo-600 disabled:bg-gray-400 transition-all duration-200 text-xs"
+                    aria-label="Download hall ticket"
+                  >
                     Hall Ticket
                   </button>
                 </td>
@@ -68,9 +126,12 @@
         </table>
       </div>
       <div class="mt-4 flex space-x-2">
-        <button @click="saveStatusUpdates" 
-                :disabled="selectedStudentIds.length === 0"
-                class="bg-green-500 text-white px-4 py-2 rounded-md hover:bg-green-600 disabled:bg-gray-400 transition-all duration-200 text-sm">
+        <button 
+          @click="saveStatusUpdates" 
+          :disabled="selectedStudentIds.length === 0 || isSaving"
+          class="bg-green-500 text-white px-4 py-2 rounded-md hover:bg-green-600 disabled:bg-gray-400 transition-all duration-200 text-sm"
+          aria-label="Save status updates"
+        >
           Save Status Updates ({{ selectedStudentIds.length }})
         </button>
       </div>
@@ -81,16 +142,86 @@
 <script>
 import axios from 'axios';
 import apiConfig from '@/config/apiConfig';
-import { defineComponent } from 'vue';
+import { defineComponent, ref, computed } from 'vue';
 import { jsPDF } from 'jspdf';
-
-// Import logo and signature images
 import uletkzLogo from '@/images/uletkz.png';
 import pmistLogo from '@/images/pmist.png';
 import nodalOfficerSignature from '@/images/nodalofficer-signature.png';
 
 // Create Axios instance without baseURL initially
 const api = axios.create({ withCredentials: true });
+
+// Utility to fetch image as base64 in a browser environment
+async function fetchImageAsBase64(url) {
+  console.log(`Attempting to fetch image from: ${url}`);
+  const startTime = Date.now();
+  try {
+    const response = await axios.get(url, { responseType: 'blob' });
+    console.log(`Image fetch successful, status: ${response.status}, response size: ${response.data.size} bytes`);
+
+    // Determine MIME type from response headers or file extension
+    let mimeType = response.headers['content-type']?.toLowerCase();
+    if (!mimeType || !mimeType.startsWith('image/')) {
+      const extension = url.split('.').pop().toLowerCase();
+      const mimeTypes = {
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        png: 'image/png',
+        webp: 'image/webp',
+        gif: 'image/gif',
+        bmp: 'image/bmp',
+        tiff: 'image/tiff',
+        ico: 'image/x-icon',
+        svg: 'image/svg+xml',
+      };
+      mimeType = mimeTypes[extension] || 'image/jpeg';
+      console.log(`[Frontend] MIME type not provided in headers, inferred as ${mimeType} from extension .${extension}`);
+    }
+
+    // Explicitly log JPG/JPEG detection
+    if (mimeType === 'image/jpeg') {
+      console.log('[Frontend] Detected JPG/JPEG image format');
+    }
+
+    // jsPDF primarily supports JPEG, PNG, and WebP (in some versions)
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) {
+      console.warn(`[Frontend] Image type ${mimeType} may not be supported by jsPDF. Attempting to load, but you may need to upload a JPEG, PNG, or WebP image.`);
+    }
+
+    // Convert blob to Base64 using FileReader
+    const base64Image = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (reader.result) {
+          resolve(reader.result);
+        } else {
+          reject(new Error('Failed to convert image to Base64'));
+        }
+      };
+      reader.onerror = () => reject(new Error('Error reading image blob'));
+      reader.readAsDataURL(response.data);
+    });
+
+    const endTime = Date.now();
+    console.log(`[Frontend] Image fetch and Base64 conversion took ${endTime - startTime}ms`);
+
+    return base64Image;
+  } catch (error) {
+    const endTime = Date.now();
+    console.error(`[Frontend] Image fetch failed after ${endTime - startTime}ms`);
+    console.error('Error fetching image:', error.message);
+    if (error.response) {
+      console.error(`HTTP Status: ${error.response.status}, Status Text: ${error.response.statusText}`);
+      throw new Error(`Failed to fetch image (HTTP ${error.response.status}): ${error.response.statusText}. Please ensure your profile photo is uploaded correctly at ${url}.`);
+    } else if (error.request) {
+      console.error('No response received from server. Possible network or CORS issue.');
+      throw new Error(`Failed to fetch image: No response from server. Please check your network connection or ensure the backend is accessible at ${url}.`);
+    } else {
+      console.error('Error setting up the request:', error.message);
+      throw new Error(`Failed to fetch image: ${error.message}. Please ensure your profile photo is a valid image (e.g., JPG, JPEG, PNG, WebP) and uploaded correctly at ${url}.`);
+    }
+  }
+}
 
 export default defineComponent({
   name: 'AdminEnrollments',
@@ -100,23 +231,58 @@ export default defineComponent({
   data() {
     return {
       isLoading: false,
+      isSaving: false,
       courses: [],
       selectedCourseId: '',
       enrolledStudents: [],
       selectedStudentIds: [],
       selectAllStudents: false,
+      baseUrl: '',
+      searchQuery: '',
     };
+  },
+  setup() {
+    const isDownloading = ref(false);
+    return { isDownloading };
+  },
+  computed: {
+    filteredStudents() {
+      if (!this.searchQuery.trim()) {
+        return this.enrolledStudents;
+      }
+      const query = this.searchQuery.toLowerCase().trim();
+      return this.enrolledStudents.filter(student => 
+        student.name.toLowerCase().includes(query) || 
+        student.registerNo.toLowerCase().includes(query)
+      );
+    },
+    isIndeterminate() {
+      if (this.filteredStudents.length === 0) return false;
+      const allSelectedAndTicked = this.filteredStudents.every(student => 
+        this.selectedStudentIds.includes(student.id) && 
+        student.isEligible && 
+        student.paymentConfirmed
+      );
+      const someSelectedOrTicked = this.filteredStudents.some(student => 
+        this.selectedStudentIds.includes(student.id) || 
+        student.isEligible || 
+        student.paymentConfirmed
+      );
+      return !allSelectedAndTicked && someSelectedOrTicked;
+    },
   },
   async created() {
     console.log('[Frontend] Component created, initializing base URL...');
     try {
       const baseURL = await apiConfig.getBaseURL();
       api.defaults.baseURL = baseURL;
+      this.baseUrl = baseURL;
       console.log('[Frontend] Base URL set to:', baseURL);
     } catch (error) {
       console.error('[Frontend] Failed to fetch base URL:', error);
-      api.defaults.baseURL = 'http://localhost:3000'; // Fallback
-      console.log('[Frontend] Using fallback base URL:', api.defaults.baseURL);
+      api.defaults.baseURL = 'https://mooc-backend-1.onrender.com'; // Fallback
+      this.baseUrl = api.defaults.baseURL;
+      console.log('[Frontend] Using fallback base URL:', this.baseUrl);
     }
     this.fetchCourses();
   },
@@ -143,6 +309,7 @@ export default defineComponent({
         this.enrolledStudents = [];
         this.selectedStudentIds = [];
         this.selectAllStudents = false;
+        this.searchQuery = '';
         return;
       }
       console.log('[Frontend] Fetching students for course ID:', this.selectedCourseId);
@@ -152,8 +319,10 @@ export default defineComponent({
         console.log('[Frontend] Students fetched:', response.data);
         this.enrolledStudents = response.data.map(student => ({
           ...student,
-          originalIsEligible: student.isEligible, // Store original values
-          originalPaymentConfirmed: student.paymentConfirmed
+          isEligible: student.isEligible === 1, // Convert 1 to true, 0 to false
+          paymentConfirmed: student.paymentConfirmed === 1, // Convert 1 to true, 0 to false
+          originalIsEligible: student.isEligible === 1,
+          originalPaymentConfirmed: student.paymentConfirmed === 1
         }));
         this.updateSelectedStudents();
       } catch (error) {
@@ -168,21 +337,30 @@ export default defineComponent({
     toggleSelectAllStudents() {
       console.log('[Frontend] Toggling select all students, current state:', this.selectAllStudents);
       if (this.selectAllStudents) {
-        this.selectedStudentIds = this.enrolledStudents
-          .filter(student => student.isEligible && student.paymentConfirmed)
-          .map(student => student.id);
-        console.log('[Frontend] Selected all eligible students:', this.selectedStudentIds);
+        this.selectedStudentIds = this.filteredStudents.map(student => student.id);
+        this.filteredStudents.forEach(student => {
+          student.isEligible = true;
+          student.paymentConfirmed = true;
+        });
+        console.log('[Frontend] Selected all students and marked as eligible and paid:', this.selectedStudentIds);
       } else {
         this.selectedStudentIds = [];
         console.log('[Frontend] Deselected all students');
       }
+      this.updateSelectedStudents();
     },
     updateSelectedStudents() {
       console.log('[Frontend] Updating selected students based on eligibility and payment...');
-      this.selectedStudentIds = this.enrolledStudents
-        .filter(student => student.isEligible && student.paymentConfirmed)
-        .map(student => student.id);
-      this.selectAllStudents = this.selectedStudentIds.length === this.enrolledStudents.length && this.enrolledStudents.length > 0;
+      if (this.filteredStudents.length === 0) {
+        this.selectAllStudents = false;
+        return;
+      }
+      this.selectAllStudents = this.selectedStudentIds.length === this.filteredStudents.length && 
+                              this.filteredStudents.every(student => 
+                                this.selectedStudentIds.includes(student.id) && 
+                                student.isEligible && 
+                                student.paymentConfirmed
+                              );
       console.log('[Frontend] Updated selected student IDs:', this.selectedStudentIds, 'Select all:', this.selectAllStudents);
     },
     async saveStatusUpdates() {
@@ -191,7 +369,7 @@ export default defineComponent({
         return;
       }
       console.log('[Frontend] Saving status updates for students:', this.selectedStudentIds);
-      this.isLoading = true;
+      this.isSaving = true;
       try {
         const updates = this.selectedStudentIds.map(studentId => {
           const student = this.enrolledStudents.find(s => s.id === studentId);
@@ -209,7 +387,6 @@ export default defineComponent({
           userId: this.user.id
         });
         console.log('[Frontend] Status updates response:', response.data);
-        // Update original values after successful save
         this.enrolledStudents = this.enrolledStudents.map(student => ({
           ...student,
           originalIsEligible: student.isEligible,
@@ -221,7 +398,6 @@ export default defineComponent({
         const errorMsg = error.response?.data?.error || error.message;
         console.error('[Frontend] Error saving status updates:', errorMsg);
         alert(`Failed to save status updates: ${errorMsg}`);
-        // Revert changes on error
         this.enrolledStudents = this.enrolledStudents.map(student => ({
           ...student,
           isEligible: student.originalIsEligible,
@@ -229,64 +405,87 @@ export default defineComponent({
         }));
         this.updateSelectedStudents();
       } finally {
-        this.isLoading = false;
-        console.log('[Frontend] Save status updates complete, loading state:', this.isLoading);
+        this.isSaving = false;
+        console.log('[Frontend] Save status updates complete, saving state:', this.isSaving);
       }
     },
     async downloadHallTicketForStudent(studentId) {
-      console.log('[Frontend] Initiating hall ticket download for student ID:', studentId);
-      this.isLoading = true;
+      console.log('[Frontend] Initiating hall ticket download for student ID:', studentId, 'Course ID:', this.selectedCourseId);
+      console.log('[Frontend] Using base URL:', this.baseUrl);
+      if (!this.selectedCourseId) {
+        console.error('[Frontend] Invalid courseId provided');
+        alert('Failed to generate hall ticket: Invalid course ID');
+        return;
+      }
+      this.isDownloading = true;
       try {
         const payload = {
           courseId: this.selectedCourseId,
-          studentIds: [studentId]
+          studentIds: [studentId],
         };
         console.log('[Frontend] Sending hall ticket request to backend:', payload);
-        const response = await api.post('/api/admin-enrollments/hall-ticket', payload);
+        const response = await api.post('/api/admin-enrollments/hall-ticket', payload, { withCredentials: true });
         console.log('[Frontend] Received hall ticket response:', response.data);
         const { hallTickets } = response.data;
-        if (hallTickets.length === 0) {
+        if (!hallTickets || hallTickets.length === 0) {
           throw new Error('No hall ticket data returned from backend');
         }
-        console.log('[Frontend] Hall tickets data:', hallTickets);
-        this.generateHallTicketPDF(hallTickets);
+        console.log('[Frontend] Hall tickets data:', JSON.stringify(hallTickets, null, 2));
+
+        for (const [index, ticket] of hallTickets.entries()) {
+          if (!ticket.student || !ticket.student.photo) {
+            console.error(`[Frontend] Student photo missing for hall ticket ${index + 1}, student: ${ticket.student?.name || 'N/A'}`);
+            throw new Error('Student photo is missing. Please upload a profile photo in your profile settings.');
+          }
+        }
+
+        await this.generateHallTicketPDF(hallTickets, studentId);
       } catch (error) {
         const errorMsg = error.response?.data?.error || error.message;
         console.error('[Frontend] Error generating hall ticket:', errorMsg);
         alert(`Failed to generate hall ticket: ${errorMsg}`);
       } finally {
-        this.isLoading = false;
-        console.log('[Frontend] Hall ticket download process complete, loading state:', this.isLoading);
+        this.isDownloading = false;
+        console.log('[Frontend] Hall ticket download process complete, downloading state:', this.isDownloading);
       }
     },
-    generateHallTicketPDF(hallTickets) {
+    async generateHallTicketPDF(hallTickets, studentId) {
       console.log('[Frontend] Starting PDF generation with jsPDF for hall tickets:', hallTickets);
       const doc = new jsPDF();
       let yOffset = 10;
 
-      hallTickets.forEach((ticket, index) => {
+      for (const [index, ticket] of hallTickets.entries()) {
         const { student, course } = ticket;
-        console.log(`[Frontend] Generating PDF content for hall ticket ${index + 1}, student: ${student.name}`);
+        console.log(`[Frontend] Generating PDF content for hall ticket ${index + 1}, student: ${student?.name || 'N/A'}`);
+
+        if (!course) {
+          console.error(`[Frontend] Course data missing for hall ticket ${index + 1}`);
+          doc.setFontSize(12);
+          doc.setTextColor(255, 0, 0);
+          doc.text('Error: Course data is missing for this hall ticket.', 10, yOffset);
+          yOffset += 10;
+          doc.text('Please contact the PMIST SWAYAM Nodal Office.', 10, yOffset);
+          doc.save(`hall_ticket_error_${studentId}_${this.selectedCourseId}.pdf`);
+          throw new Error('Course data is missing in hall ticket');
+        }
 
         if (index > 0) {
           doc.addPage();
           yOffset = 10;
         }
 
-        // Header with Logos and Text Aligned on the Same Line
-        const logoY = yOffset; // Align logos and text block at the same y-position
-        // Add Logos
-        doc.addImage(uletkzLogo, 'PNG', 10, logoY, 30, 12); // Left logo
-        doc.addImage(pmistLogo, 'PNG', 170, logoY, 30, 12); // Right logo, adjusted x-position
+        const logoY = yOffset;
+        doc.addImage(uletkzLogo, 'PNG', 10, logoY, 30, 12);
+        doc.addImage(pmistLogo, 'PNG', 170, logoY, 30, 12);
 
-        // Text Block (Centered between logos)
-        const textBlockStartX = 40; // Space after left logo
-        const textBlockWidth = 130; // Space between logos (210 - 40 - 40)
-        const textBlockCenterX = textBlockStartX + textBlockWidth / 2; // Center point for text
+        const textBlockStartX = 40;
+        const textBlockWidth = 130;
+        const textBlockCenterX = textBlockStartX + textBlockWidth / 2;
 
         yOffset += 4;
         doc.setFontSize(12);
         doc.setFont('helvetica', 'bold');
+        doc.setTextColor(0, 0, 0);
         doc.text('CENTRE FOR ONLINE AND BLENDED LEARNING', textBlockCenterX, yOffset, { align: 'center' });
         yOffset += 6;
         doc.setFontSize(10);
@@ -297,10 +496,8 @@ export default defineComponent({
         yOffset += 5;
         doc.text('www.moocs.pmu.edu', textBlockCenterX, yOffset, { align: 'center' });
 
-        // Add Space Before Exam Title and Hall Ticket
         yOffset += 10;
 
-        // Exam Title and Hall Ticket
         doc.setFontSize(12);
         doc.setFont('helvetica', 'bold');
         doc.text('END-TERM PROCTORED EXAMINATION, MAY - JUNE 2025', 105, yOffset, { align: 'center' });
@@ -309,46 +506,59 @@ export default defineComponent({
         doc.text('HALL TICKET', 105, yOffset, { align: 'center' });
         yOffset += 15;
 
-        // Candidate Details with Photo Box Aligned
-        const candidateStartY = yOffset; // Track starting y-position for alignment
+        const candidateStartY = yOffset;
         doc.setFontSize(10);
         doc.setFont('helvetica', 'bold');
         doc.text('Name of the Candidate:', 10, yOffset);
         doc.setFont('helvetica', 'normal');
-        doc.text(student.name, 60, yOffset);
+        doc.text(student.name || 'N/A', 60, yOffset);
         yOffset += 8;
         doc.setFont('helvetica', 'bold');
         doc.text('Register Number:', 10, yOffset);
         doc.setFont('helvetica', 'normal');
-        doc.text(student.registerNo, 60, yOffset);
+        doc.text(student.registerNo || 'N/A', 60, yOffset);
         yOffset += 8;
         doc.setFont('helvetica', 'bold');
         doc.text('ABC ID:', 10, yOffset);
         doc.setFont('helvetica', 'normal');
         doc.text(student.abcId || '-', 60, yOffset);
 
-        // Photo Placeholder (Aligned with Candidate Details)
         doc.setFont('helvetica', 'normal');
-        doc.rect(160, candidateStartY, 30, 30); // Box aligned with the start of candidate details
-        doc.setFontSize(8); // Smaller font for the text inside the box
-        const line1 = 'Paste your';
-        const line2 = 'recent photo';
-        const maxWidth = 26; // 30mm box width - 2mm left margin - 2mm right margin
-        const line1Width = doc.getTextWidth(line1);
-        const line2Width = doc.getTextWidth(line2);
-        const line1X = 160 + (30 - line1Width) / 2; // Center first line
-        const line2X = 160 + (30 - line2Width) / 2; // Center second line
-        const line1Y = candidateStartY + 12; // First line, adjusted for vertical centering
-        const line2Y = candidateStartY + 18; // Second line, 6mm below the first
-        doc.text(line1, line1X, line1Y);
-        doc.text(line2, line2X, line2Y);
-        doc.setFontSize(10); // Reset font size
-        yOffset += 10; // Space after candidate details
+        doc.setLineWidth(0.5);
+        doc.setDrawColor(0, 102, 204);
+        doc.rect(160, candidateStartY, 30, 30);
 
-        // Extra Space Before Course Details
+        const padding = 1;
+        const photoSize = 30 - 2 * padding;
+        const photoX = 160 + padding;
+        const photoY = candidateStartY + padding;
+
+        try {
+          const photoUrl = `${this.baseUrl}${student.photo}`;
+          console.log(`Fetching student photo from: ${photoUrl}`);
+          const photoBase64 = await fetchImageAsBase64(photoUrl);
+          if (!photoBase64) {
+            throw new Error('Failed to fetch student photo: No data returned');
+          }
+
+          const mimeType = photoBase64.split(';')[0].split(':')[1];
+          const imageFormat = mimeType.split('/')[1].toUpperCase();
+
+          doc.addImage(photoBase64, imageFormat, photoX, photoY, photoSize, photoSize, undefined, 'NONE', 0);
+          console.log(`[Frontend] Successfully added student photo to PDF for ${student.registerNo}`);
+        } catch (error) {
+          console.error(`[Frontend] Error adding student photo to PDF for ${student.registerNo}:`, error);
+          throw new Error(error.message);
+        }
+
+        doc.setLineWidth(0.2);
+        doc.setDrawColor(0, 0, 0);
+
+        doc.setFontSize(10);
+        yOffset += 10;
+
         yOffset += 12;
 
-        // Course Details Table
         doc.setFontSize(12);
         doc.setFont('helvetica', 'bold');
         doc.text('Course Details', 10, yOffset);
@@ -357,7 +567,6 @@ export default defineComponent({
         doc.setDrawColor(0);
         doc.setFillColor(240, 240, 240);
 
-        // Table Headers
         const tableX = 10;
         const tableWidths = [30, 60, 30, 30, 30];
         const headers = ['Course Code', 'Course Name', 'Date', 'Time', 'Venue'];
@@ -370,14 +579,13 @@ export default defineComponent({
         doc.line(tableX, yOffset, tableX + tableWidths.reduce((a, b) => a + b, 0), yOffset);
         yOffset += 4;
 
-        // Table Row
         doc.setFont('helvetica', 'normal');
         const rowData = [
           course.courseCode || '-',
-          course.name,
-          course.examDate,
-          course.examTime,
-          'PKC Lab 1' // Hardcoded venue as per PDF
+          course.name || 'Unknown Course',
+          course.examDate || 'N/A',
+          course.examTime || 'N/A',
+          'PKC Lab 1'
         ];
         rowData.forEach((data, i) => {
           doc.text(data, tableX + tableWidths.slice(0, i).reduce((a, b) => a + b, 0) + 2, yOffset);
@@ -386,7 +594,6 @@ export default defineComponent({
         doc.line(tableX, yOffset, tableX + tableWidths.reduce((a, b) => a + b, 0), yOffset);
         yOffset += 10;
 
-        // General Instructions
         doc.setFontSize(12);
         doc.setFont('helvetica', 'bold');
         doc.text('GENERAL INSTRUCTIONS', 10, yOffset);
@@ -394,61 +601,64 @@ export default defineComponent({
         doc.setFontSize(9);
         doc.setFont('helvetica', 'normal');
         const instructions = [
-          'Hall Ticket (with recent passport-size photo) and original Institute ID Card must be presented for verification.',
-          'Printed Hall Ticket with photo is mandatory. Digital copies on mobile phones or other devices will not be accepted.',
+          'This is a proctored, in-person, computer-based examination of 120 minutes duration.',
+          'A printed Hall Ticket is mandatory for entry. If the photo is unclear / not printed, a recent passport-size photo must be affixed in the designated space and attested by the HoD.',
+          'Digital copies of the Hall Ticket on mobile phones or other devices will not be accepted.',
+          'Original Institute ID card must be presented along with the Hall Ticket for verification.',
+          'Candidates must report to the exam venue at least 15 minutes before the scheduled start time.',
           'Ensure eligibility and fee payment status are confirmed prior to entry.',
-          'Report to the exam venue at least 15 minutes before the exam starts.',
-          'White sheets will be provided upon request. Candidates must write their name and register number on each sheet before use. All sheets (used/unused) must be returned to the invigilator after the exam.',
           'Formal dress code is mandatory.',
           'Candidates must bring their own pen, pencil, and eraser.',
-          'Maintain proper code of conduct throughout the exam. PSNO reserves the right to take disciplinary action in case of misconduct.',
-          'In case of delays due to unforeseen circumstances, PSNO will determine the appropriate course of action as it deems fit.',
-          'All digital/electronic devices and unauthorized printed/written materials are strictly prohibited in the exam centre.'
+          'All digital/electronic devices (including mobile phones, smart watches, etc.) and unauthorized printed or written materials are strictly prohibited inside the exam venue.',
+          'White sheets will be provided upon request. Candidates must write their name and register number on each sheet before use. All sheets (used and unused) must be returned to the invigilator.',
+          'Candidates must maintain proper code of conduct throughout the exam. Any form of misconduct will invite disciplinary action as deemed necessary by PSNO.',
+          'In case of delays, interruptions, or suspension of the exam due to unforeseen circumstances, the PMIST SWAYAM Nodal Office (PSNO) will determine the appropriate course of action.'
         ];
         instructions.forEach(instruction => {
-          // Draw a dark-filled circle as bullet
-          doc.setFillColor(0, 0, 0); // Black fill
-          doc.circle(12, yOffset - 1, 1, 'F'); // Filled circle (radius 1mm)
-          const lines = doc.splitTextToSize(instruction, 175); // Adjusted width to account for bullet
+          doc.setFillColor(0, 0, 0);
+          doc.circle(12, yOffset - 1, 1, 'F');
+          const lines = doc.splitTextToSize(instruction, 175);
           lines.forEach((line, lineIndex) => {
-            doc.text(line, 16, yOffset); // Text starts after bullet
+            doc.text(line, 16, yOffset);
             yOffset += 5;
           });
         });
         yOffset += 12;
 
-        // Signatures (Aligned and Equal Space)
-        // Nodal Officer Signature (Above Text)
-        const signatureStartY = yOffset; // Track starting y-position for signatures
-        doc.addImage(nodalOfficerSignature, 'PNG', 160, signatureStartY, 40, 15); // Positioned above the text
-        yOffset += 20; // Space for the signature image
-        // Align both labels on the same line with adjusted font size for candidate
-        doc.setFontSize(10); // Increased to visually match the signature image height
+        const signatureStartY = yOffset;
+        doc.addImage(nodalOfficerSignature, 'PNG', 160, signatureStartY, 40, 15);
+        yOffset += 20;
+        doc.setFontSize(10);
         doc.text('Signature of the Candidate', 10, yOffset);
-        doc.setFontSize(10); // Reset to default for nodal officer text
         doc.text('PMIST SWAYAM Nodal Officer (PSNO)', 140, yOffset);
-        doc.setFontSize(10); // Ensure font size is reset for subsequent text
-        yOffset += 25; // Equal space for both candidate and nodal officer to sign
+        yOffset += 25;
 
-        // Footer (At bottom of the page)
         doc.setFontSize(8);
-        const footerY = 280; // Near bottom of A4 page (297mm height)
+        const footerY = 280;
         const currentDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '/');
         doc.text(`Issued on: ${currentDate}`, 10, footerY);
         doc.text('Contact the PMIST SWAYAM Nodal Office for any discrepancies.', 10, footerY + 5);
-        doc.text(`Page ${index + 1} of ${hallTickets.length}`, 190, footerY + 5, { align: 'right' });
-      });
+      }
 
-      const fileName = `hall_ticket_${this.selectedCourseId}_${hallTickets[0].student.id}.pdf`;
+      const fileName = `hall_ticket_${studentId}_${this.selectedCourseId}.pdf`;
       console.log('[Frontend] Saving PDF as:', fileName);
       doc.save(fileName);
       console.log('[Frontend] PDF download triggered successfully');
     }
   },
   watch: {
-    enrolledStudents() {
-      console.log('[Frontend] Enrolled students updated, recalculating selected students...');
-      this.updateSelectedStudents();
+    filteredStudents: {
+      handler() {
+        console.log('[Frontend] Filtered students updated, recalculating selected students...');
+        this.updateSelectedStudents();
+      },
+      deep: true
+    },
+    selectedStudentIds: {
+      handler() {
+        console.log('[Frontend] Selected student IDs changed, updating select all state...');
+        this.updateSelectedStudents();
+      }
     }
   }
 });
@@ -510,4 +720,3 @@ input[type="checkbox"]:disabled {
   cursor: not-allowed;
 }
 </style>
-```
