@@ -99,9 +99,9 @@
               Student Login
             </button>
           </div>
-          <p v-if="error" class="mt-4 text-center text-red-500 font-medium animate-pulse text-xs sm:text-sm">
-            {{ error }}
-          </p>
+          <!-- <p v-if="error" class="mt-4 text-center text-red-500 font-medium animate-pulse text-xs sm:text-sm">
+             {{ error }}
+          </p> -->
         </div>
       </div>
 
@@ -149,7 +149,7 @@
 
     <!-- Footer (Fixed at Bottom) -->
     <footer class="py-4 px-4 sm:px-6 lg:px-8 bg-gray-50 text-center text-gray-600 text-xs sm:text-sm shadow-inner">
-      <p>Developed by <span class="font-semibold"><a href="https://salmanparis.tech/" target="_blank">Salman Paris</a></span> | © 2025 Department Of Informatics</p>
+      <p>Developed by <span class="font-semibold"><a href="https://www.pmu.edu" target="_blank">VISTA</a></span> | © 2025 Department Of Informatics</p>
     </footer>
   </div>
 </template>
