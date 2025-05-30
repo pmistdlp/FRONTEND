@@ -8,11 +8,11 @@ import apiConfig from './config/apiConfig';
 const app = createApp(App);
 
 // Axios configuration
-async function initializeAxios() {
+function initializeAxios() {
   try {
-    const baseURL = await apiConfig.getBaseURL();
+    const baseURL = apiConfig.getBaseURL(); // Synchronous call
     console.log('Axios baseURL set to:', baseURL);
-    
+
     // Set Axios defaults
     axios.defaults.baseURL = baseURL;
     axios.defaults.timeout = 30000; // 30 seconds timeout
@@ -21,19 +21,19 @@ async function initializeAxios() {
     throw new Error('Axios initialization failed');
   }
 
-  // Add Axios retry interceptor
+  // Add Axios retry interceptor for actual API calls
   axios.interceptors.response.use(
     (response) => response,
     async (error) => {
       const config = error.config;
-      
-      // Only retry for specific errors (e.g., 404, timeout, or network errors)
+
+      // Only retry for specific errors (e.g., timeout or network errors, exclude 404)
       if (!config || !config.retry) {
         config.retry = 3; // Max 3 retries
         config.retryDelay = 1000; // 1 second delay between retries
       }
 
-      if (config.retry > 0 && (error.response?.status === 404 || error.code === 'ECONNABORTED' || !error.response)) {
+      if (config.retry > 0 && (error.code === 'ECONNABORTED' || !error.response)) {
         console.warn(`Retrying request to ${config.url}. Attempts left: ${config.retry}`);
         config.retry -= 1;
         await new Promise((resolve) => setTimeout(resolve, config.retryDelay));
