@@ -89,11 +89,11 @@
                     aria-label="Select student"
                   />
                 </td>
-                <td class="py-2 px-3 border-b border-gray-200">{{ student.name }}</td>
-                <td class="py-2 px-3 border-b border-gray-200">{{ student.registerNo }}</td>
-                <td class="py-2 px-3 border-b border-gray-200">{{ student.dob }}</td>
-                <td class="py-2 px-3 border-b border-gray-200">{{ student.aadharNumber || '-' }}</td>
-                <td class="py-2 px-3 border-b border-gray-200">{{ student.abcId || '-' }}</td>
+                <td class="py-2 px-3 border-b border-gray-200">{{ student.name || 'N/A' }}</td>
+                <td class="py-2 px-3 border-b border-gray-200">{{ student.registerNo || 'N/A' }}</td>
+                <td class="py-2 px-3 border-b border-gray-200">{{ student.dob || 'N/A' }}</td>
+                <td class="py-2 px-3 border-b border-gray-200">{{ student.aadharNumber || 'N/A' }}</td>
+                <td class="py-2 px-3 border-b border-gray-200">{{ student.abcId || 'N/A' }}</td>
                 <td class="py-2 px-3 border-b border-gray-200">
                   <input 
                     type="checkbox" 
@@ -159,7 +159,6 @@ async function fetchImageAsBase64(url) {
     const response = await axios.get(url, { responseType: 'blob' });
     console.log(`Image fetch successful, status: ${response.status}, response size: ${response.data.size} bytes`);
 
-    // Determine MIME type from response headers or file extension
     let mimeType = response.headers['content-type']?.toLowerCase();
     if (!mimeType || !mimeType.startsWith('image/')) {
       const extension = url.split('.').pop().toLowerCase();
@@ -178,17 +177,14 @@ async function fetchImageAsBase64(url) {
       console.log(`[Frontend] MIME type not provided in headers, inferred as ${mimeType} from extension .${extension}`);
     }
 
-    // Explicitly log JPG/JPEG detection
     if (mimeType === 'image/jpeg') {
       console.log('[Frontend] Detected JPG/JPEG image format');
     }
 
-    // jsPDF primarily supports JPEG, PNG, and WebP (in some versions)
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) {
       console.warn(`[Frontend] Image type ${mimeType} may not be supported by jsPDF. Attempting to load, but you may need to upload a JPEG, PNG, or WebP image.`);
     }
 
-    // Convert blob to Base64 using FileReader
     const base64Image = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -204,7 +200,6 @@ async function fetchImageAsBase64(url) {
 
     const endTime = Date.now();
     console.log(`[Frontend] Image fetch and Base64 conversion took ${endTime - startTime}ms`);
-
     return base64Image;
   } catch (error) {
     const endTime = Date.now();
@@ -252,8 +247,8 @@ export default defineComponent({
       }
       const query = this.searchQuery.toLowerCase().trim();
       return this.enrolledStudents.filter(student => 
-        student.name.toLowerCase().includes(query) || 
-        student.registerNo.toLowerCase().includes(query)
+        (student.name?.toLowerCase() || '').includes(query) || 
+        (student.registerNo?.toLowerCase() || '').includes(query)
       );
     },
     isIndeterminate() {
@@ -316,14 +311,20 @@ export default defineComponent({
       this.isLoading = true;
       try {
         const response = await api.get(`/api/admin-enrollments/students/${this.selectedCourseId}`);
-        console.log('[Frontend] Students fetched:', response.data);
+        console.log('[Frontend] Raw students fetched:', response.data);
         this.enrolledStudents = response.data.map(student => ({
-          ...student,
-          isEligible: student.isEligible === 1, // Convert 1 to true, 0 to false
-          paymentConfirmed: student.paymentConfirmed === 1, // Convert 1 to true, 0 to false
-          originalIsEligible: student.isEligible === 1,
-          originalPaymentConfirmed: student.paymentConfirmed === 1
+          id: student.id,
+          name: student.name || 'N/A',
+          registerNo: student.registerno || 'N/A',
+          dob: student.dob || 'N/A',
+          aadharNumber: student.aadharnumber || 'N/A',
+          abcId: student.abcid || 'N/A',
+          isEligible: student.iseligible === true || student.iseligible === 1,
+          paymentConfirmed: student.paymentconfirmed === true || student.paymentconfirmed === 1,
+          originalIsEligible: student.iseligible === true || student.iseligible === 1,
+          originalPaymentConfirmed: student.paymentconfirmed === true || student.paymentconfirmed === 1
         }));
+        console.log('[Frontend] Processed students:', this.enrolledStudents);
         this.updateSelectedStudents();
       } catch (error) {
         const errorMsg = error.response?.data?.error || error.message;
@@ -430,14 +431,11 @@ export default defineComponent({
         if (!hallTickets || hallTickets.length === 0) {
           throw new Error('No hall ticket data returned from backend');
         }
-        console.log('[Frontend] Hall tickets data:', JSON.stringify(hallTickets, null, 2));
+        console.log('[Frontend] Hall tickets student data:', hallTickets.map(ticket => ticket.student));
+        console.log('[Frontend] Full hall tickets data:', JSON.stringify(hallTickets, null, 2));
 
-        for (const [index, ticket] of hallTickets.entries()) {
-          if (!ticket.student || !ticket.student.photo) {
-            console.error(`[Frontend] Student photo missing for hall ticket ${index + 1}, student: ${ticket.student?.name || 'N/A'}`);
-            throw new Error('Student photo is missing. Please upload a profile photo in your profile settings.');
-          }
-        }
+        // Removed the photo requirement check
+        // Previously: if (!ticket.student || !ticket.student.photo) { throw new Error(...); }
 
         await this.generateHallTicketPDF(hallTickets, studentId);
       } catch (error) {
@@ -521,34 +519,53 @@ export default defineComponent({
         doc.setFont('helvetica', 'bold');
         doc.text('ABC ID:', 10, yOffset);
         doc.setFont('helvetica', 'normal');
-        doc.text(student.abcId || '-', 60, yOffset);
+        doc.text(student.abcId || 'N/A', 60, yOffset);
 
         doc.setFont('helvetica', 'normal');
         doc.setLineWidth(0.5);
         doc.setDrawColor(0, 102, 204);
-        doc.rect(160, candidateStartY, 30, 30);
+        doc.rect(160, candidateStartY, 30, 30); // Draw the box (same position as before)
 
         const padding = 1;
         const photoSize = 30 - 2 * padding;
         const photoX = 160 + padding;
         const photoY = candidateStartY + padding;
 
-        try {
-          const photoUrl = `${this.baseUrl}${student.photo}`;
-          console.log(`Fetching student photo from: ${photoUrl}`);
-          const photoBase64 = await fetchImageAsBase64(photoUrl);
-          if (!photoBase64) {
-            throw new Error('Failed to fetch student photo: No data returned');
+        if (student.photo) {
+          // If photo exists, display it
+          try {
+            const photoUrl = `${this.baseUrl}${student.photo}`;
+            console.log(`Fetching student photo from: ${photoUrl}`);
+            const photoBase64 = await fetchImageAsBase64(photoUrl);
+            if (!photoBase64) {
+              throw new Error('Failed to fetch student photo: No data returned');
+            }
+
+            const mimeType = photoBase64.split(';')[0].split(':')[1];
+            const imageFormat = mimeType.split('/')[1].toUpperCase();
+
+            doc.addImage(photoBase64, imageFormat, photoX, photoY, photoSize, photoSize, undefined, 'NONE', 0);
+            console.log(`[Frontend] Successfully added student photo to PDF for ${student.registerNo}`);
+          } catch (error) {
+            console.error(`[Frontend] Error adding student photo to PDF for ${student.registerNo}:`, error);
+            // If photo fetch fails, show the "Paste your photo" text
+            doc.setFontSize(8);
+            doc.setTextColor(0, 0, 0);
+            const textLines = doc.splitTextToSize('Paste your photo', 28);
+            const textHeight = textLines.length * 4;
+            const textY = candidateStartY + 15 - (textHeight / 2);
+            doc.text(textLines, 161, textY);
+            console.log(`[Frontend] Photo fetch failed, displaying "Paste your photo" placeholder for ${student.registerNo}`);
           }
-
-          const mimeType = photoBase64.split(';')[0].split(':')[1];
-          const imageFormat = mimeType.split('/')[1].toUpperCase();
-
-          doc.addImage(photoBase64, imageFormat, photoX, photoY, photoSize, photoSize, undefined, 'NONE', 0);
-          console.log(`[Frontend] Successfully added student photo to PDF for ${student.registerNo}`);
-        } catch (error) {
-          console.error(`[Frontend] Error adding student photo to PDF for ${student.registerNo}:`, error);
-          throw new Error(error.message);
+        } else {
+          // If no photo, display "Paste your photo" text in the center of the box
+          doc.setFontSize(8);
+          doc.setTextColor(0, 0, 0);
+          const textLines = doc.splitTextToSize('Paste your photo', 28);
+          const textHeight = textLines.length * 4;
+          const textY = candidateStartY + 15 - (textHeight / 2);
+          doc.text(textLines, 161, textY);
+          console.log(`[Frontend] No photo available, displaying "Paste your photo" placeholder for ${student.registerNo}`);
         }
 
         doc.setLineWidth(0.2);
@@ -581,7 +598,7 @@ export default defineComponent({
 
         doc.setFont('helvetica', 'normal');
         const rowData = [
-          course.courseCode || '-',
+          course.courseCode || 'N/A',
           course.name || 'Unknown Course',
           course.examDate || 'N/A',
           course.examTime || 'N/A',
