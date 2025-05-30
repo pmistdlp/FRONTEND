@@ -1,9 +1,11 @@
+<!-- client/src/components/admin/Dashboard.vue -->
 <template>
   <div class="flex h-screen bg-white text-gray-800 font-sans antialiased border-r border-gray-200">
     <Sidebar :activeSection="activeSection" :selectedCourse="selectedCourse" @updateSection="updateSection" @logout="showLogoutModal" />
     <div class="flex-1 p-6 md:p-10 overflow-y-auto">
       <Faculty ref="faculty" v-if="activeSection === 'Faculty'" 
                :facultyList="facultyList" 
+               :user="user"
                @fetchFaculty="fetchFaculty" />
       <Courses ref="courses" v-if="activeSection === 'courses'" 
                :courses="courses" 
@@ -78,6 +80,12 @@ import Students from './Students.vue';
 import History from './History.vue';
 import Result from './Result.vue';
 import AdminEnrollments from './AdminEnrollments.vue';
+import apiConfig from '@/config/apiConfig';
+
+// Create Axios instance with baseURL
+const axiosInstance = axios.create({
+  baseURL: apiConfig.baseURL,
+});
 
 export default defineComponent({
   name: 'Dashboard',
@@ -116,12 +124,16 @@ export default defineComponent({
       this.isLoading = true;
       try {
         console.log('Fetching faculty...');
-        const { data } = await axios.get('/api/staff');
+        const { data } = await axiosInstance.get('/api/staff');
         console.log('Faculty data received:', data);
-        this.facultyList = data;
+        this.facultyList = data.map(faculty => ({
+          ...faculty,
+          facultyId: faculty.facultyid, // Map facultyid to facultyId
+          isMaster: faculty.ismaster === 1, // Map ismaster to isMaster
+        }));
       } catch (error) {
-        console.error('Error fetching faculty:', error);
-        alert('Failed to fetch faculty. Please try again.');
+        console.error('Error fetching faculty:', error.response ? error.response.data : error.message);
+        alert(`Failed to fetch faculty: ${error.response ? error.response.data.error : 'Network error'}. Please try again.`);
       } finally {
         this.isLoading = false;
       }
@@ -129,11 +141,11 @@ export default defineComponent({
     async fetchCourses() {
       this.isLoading = true;
       try {
-        const { data } = await axios.get('/api/courses');
+        const { data } = await axiosInstance.get('/api/courses');
         this.courses = data;
       } catch (error) {
-        console.error('Error fetching courses:', error);
-        alert('Failed to fetch courses. Please try again.');
+        console.error('Error fetching courses:', error.response ? error.response.data : error.message);
+        alert(`Failed to fetch courses: ${error.response ? error.response.data.error : 'Network error'}. Please try again.`);
       } finally {
         this.isLoading = false;
       }
@@ -149,12 +161,12 @@ export default defineComponent({
         if (data) {
           this.questions = data;
         } else {
-          const { data: responseData } = await axios.get(`/api/questions/${courseId}`);
+          const { data: responseData } = await axiosInstance.get(`/api/questions/${courseId}`);
           this.questions = responseData;
         }
       } catch (error) {
-        console.error('Error fetching questions:', error);
-        alert('Failed to fetch questions. Please try again.');
+        console.error('Error fetching questions:', error.response ? error.response.data : error.message);
+        alert(`Failed to fetch questions: ${error.response ? error.response.data.error : 'Network error'}. Please try again.`);
       } finally {
         this.isLoading = false;
       }
@@ -162,20 +174,12 @@ export default defineComponent({
     async fetchCourseHistory() {
       this.isLoading = true;
       try {
-        const response = await axios.get('/api/history/course');
-        console.log('Course history response:', response.status, response.data);
-        this.courseHistory = response.data || [];
+        const { data } = await axiosInstance.get('/api/history/course');
+        console.log('Course history response:', data);
+        this.courseHistory = data || [];
       } catch (error) {
-        if (error.response) {
-          console.error('Error fetching course history:', error.response.status, error.response.data);
-          alert(`Failed to fetch course history: ${error.response.data.error || 'Unknown error'}. Please try again.`);
-        } else if (error.request) {
-          console.error('Network error fetching course history:', error.message);
-          alert('Failed to fetch course history: Network error. Please check your connection and try again.');
-        } else {
-          console.error('Unexpected error fetching course history:', error.message);
-          alert('Failed to fetch course history: Unexpected error. Please try again.');
-        }
+        console.error('Error fetching course history:', error.response ? error.response.data : error.message);
+        alert(`Failed to fetch course history: ${error.response ? error.response.data.error : 'Network error'}. Please try again.`);
       } finally {
         this.isLoading = false;
       }
@@ -183,11 +187,11 @@ export default defineComponent({
     async fetchStudents() {
       this.isLoading = true;
       try {
-        const { data } = await axios.get('/api/student');
+        const { data } = await axiosInstance.get('/api/student');
         this.students = data;
       } catch (error) {
-        console.error('Error fetching students:', error);
-        alert('Failed to fetch students. Please try again.');
+        console.error('Error fetching students:', error.response ? error.response.data : error.message);
+        alert(`Failed to fetch students: ${error.response ? error.response.data.error : 'Network error'}. Please try again.`);
       } finally {
         this.isLoading = false;
       }
@@ -198,14 +202,14 @@ export default defineComponent({
     async deleteStudent(id) {
       this.isLoading = true;
       try {
-        await axios.delete(`/api/student/${id}`, {
+        await axiosInstance.delete(`/api/student/${id}`, {
           data: { userType: 'admin', userId: this.user.id }
         });
         this.fetchStudents();
         this.fetchStudentHistory();
       } catch (error) {
-        console.error('Error deleting student:', error);
-        alert('Failed to delete student. Please try again.');
+        console.error('Error deleting student:', error.response ? error.response.data : error.message);
+        alert(`Failed to delete student: ${error.response ? error.response.data.error : 'Network error'}. Please try again.`);
       } finally {
         this.isLoading = false;
       }
@@ -225,11 +229,11 @@ export default defineComponent({
           this.assignedCourses = [];
           return;
         }
-        const { data } = await axios.get(`/api/student-courses/${studentId}`);
+        const { data } = await axiosInstance.get(`/api/student-courses/${studentId}`);
         this.assignedCourses = data;
       } catch (error) {
-        console.error('Error fetching assigned courses:', error);
-        alert('Failed to fetch assigned courses. Please try again.');
+        console.error('Error fetching assigned courses:', error.response ? error.response.data : error.message);
+        alert(`Failed to fetch assigned courses: ${error.response ? error.response.data.error : 'Network error'}. Please try again.`);
       } finally {
         this.isLoading = false;
       }
@@ -242,19 +246,19 @@ export default defineComponent({
         }
         const isAssigned = this.assignedCourses.some(c => c.id === courseId);
         if (isAssigned) {
-          await axios.delete('/api/student-courses', {
+          await axiosInstance.delete('/api/student-courses', {
             data: { studentId: this.selectedStudent.id, courseId }
           });
         } else {
-          await axios.post('/api/student-courses', {
+          await axiosInstance.post('/api/student-courses', {
             studentId: this.selectedStudent.id,
             courseId
           });
         }
         this.fetchAssignedCourses(this.selectedStudent.id);
       } catch (error) {
-        console.error('Error toggling course assignment:', error);
-        alert('Failed to toggle course assignment. Please try again.');
+        console.error('Error toggling course assignment:', error.response ? error.response.data : error.message);
+        alert(`Failed to toggle course assignment: ${error.response ? error.response.data.error : 'Network error'}. Please try again.`);
       } finally {
         this.isLoading = false;
       }
@@ -262,20 +266,12 @@ export default defineComponent({
     async fetchStudentHistory() {
       this.isLoading = true;
       try {
-        const response = await axios.get('/api/history/student');
-        console.log('Student history response:', response.status, response.data);
-        this.studentHistory = response.data || [];
+        const { data } = await axiosInstance.get('/api/history/student');
+        console.log('Student history response:', data);
+        this.studentHistory = data || [];
       } catch (error) {
-        if (error.response) {
-          console.error('Error fetching student history:', error.response.status, error.response.data);
-          alert(`Failed to fetch student history: ${error.response.data.error || 'Unknown error'}. Please try again.`);
-        } else if (error.request) {
-          console.error('Network error fetching student history:', error.message);
-          alert('Failed to fetch student history: Network error. Please check your connection and try again.');
-        } else {
-          console.error('Unexpected error fetching student history:', error.message);
-          alert('Failed to fetch student history: Unexpected error. Please try again.');
-        }
+        console.error('Error fetching student history:', error.response ? error.response.data : error.message);
+        alert(`Failed to fetch student history: ${error.response ? error.response.data.error : 'Network error'}. Please try again.`);
       } finally {
         this.isLoading = false;
       }

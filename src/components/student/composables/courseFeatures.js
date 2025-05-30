@@ -155,19 +155,30 @@ export function useCourseFeatures(props, emit) {
     pendingSubmissions.value = [];
     for (const submission of submissions) {
       try {
-        if (!submission.studentId || !submission.courseId || !submission.questionId || !submission.selectedAnswer) {
-          console.error('Invalid pending submission:', submission);
-          continue;
+        if (submission.answers) {
+          // Exam submission
+          if (!submission.studentId || !submission.courseId || !submission.answers) {
+            console.error('Invalid pending exam submission:', submission);
+            continue;
+          }
+          await retryOperation(() => api.post('/api/student-courses/submit-exam', submission));
+          console.log(`Pending exam submitted`);
+        } else {
+          // Individual answer submission
+          if (!submission.studentId || !submission.courseId || !submission.questionId || !submission.selectedAnswer) {
+            console.error('Invalid pending answer submission:', submission);
+            continue;
+          }
+          await retryOperation(() => api.post('/api/student-courses/submit-answer', submission));
+          console.log(`Pending answer submitted for question ${submission.questionId}`);
+          submittedAnswers.value.push({
+            questionId: submission.questionId,
+            answer: submission.selectedAnswer,
+            timestamp: new Date().toISOString()
+          });
         }
-        await retryOperation(() => api.post('/api/student-courses/submit-answer', submission));
-        console.log(`Pending answer submitted for question ${submission.questionId}`);
-        submittedAnswers.value.push({
-          questionId: submission.questionId,
-          answer: submission.selectedAnswer,
-          timestamp: new Date().toISOString()
-        });
       } catch (error) {
-        console.error(`Failed to retry submission for question ${submission.questionId}:`, error.response?.data || error.message);
+        console.error(`Failed to retry submission:`, error.response?.data || error.message);
         pendingSubmissions.value.push(submission);
       }
     }
@@ -203,6 +214,8 @@ export function useCourseFeatures(props, emit) {
     (newVal) => {
       emit('exam-status-changed', newVal);
       emit('toggle-dashboard', newVal);
+      console.log('Exam status updated:', newVal);
+      console.log('Dashboard visibility toggled, isExamActive:', newVal);
       if (newVal) {
         document.body.style.overflow = 'hidden';
       } else {
@@ -324,8 +337,10 @@ export function useCourseFeatures(props, emit) {
 
   async function fetchISTTime() {
     try {
-      const response = await axios.get('http://worldtimeapi.org/api/timezone/Asia/Kolkata');
-      return moment(response.data.datetime).tz('Asia/Kolkata');
+      const response = await axios.get('https://api.api-ninjas.com/v1/worldtime?city=delhi', {
+        headers: { 'X-Api-Key': 'YOUR_API_NINJAS_KEY' } // Replace with your API key
+      });
+      return moment.tz(response.data.datetime, 'Asia/Kolkata');
     } catch (error) {
       console.error('Failed to fetch IST time:', error.message);
       console.warn('Using local machine IST time as fallback');
@@ -417,7 +432,7 @@ export function useCourseFeatures(props, emit) {
     isRestricted.value = false;
     examResults.value = null;
     showResultsView.value = false;
-    malpracticeAttempts.value = { right_click: 0, screenshot_key: 0, other: 0 }; // Reset malpractice attempts
+    malpracticeAttempts.value = { right_click: 0, screenshot_key: 0, other: 0 };
     hasMalpractice.value = false;
     showMalpracticeWarning.value = false;
     pendingSubmissions.value = [];
@@ -499,7 +514,7 @@ export function useCourseFeatures(props, emit) {
     examStartedAt.value = null;
     showExitModalFlag.value = false;
     isExamStarted.value = false;
-    malpracticeAttempts.value = { right_click: 0, screenshot_key: 0, other: 0 }; // Reset malpractice attempts
+    malpracticeAttempts.value = { right_click: 0, screenshot_key: 0, other: 0 };
     showMalpracticeWarning.value = false;
     hasMalpractice.value = false;
     isRestricted.value = false;
@@ -615,6 +630,7 @@ export function useCourseFeatures(props, emit) {
     }
     questionStatuses.value[questionId] = 'submitted';
     try {
+      console.log('Submitting answer to:', `/api/student-courses/submit-answer`, submission);
       await retryOperation(() => api.post('/api/student-courses/submit-answer', submission));
       console.log(`Answer submitted for question ${questionId}`);
       submittedAnswers.value.push({
@@ -626,8 +642,15 @@ export function useCourseFeatures(props, emit) {
       emit('show-message', 'Answer submitted successfully.');
       navigateNext();
     } catch (error) {
-      console.error('Submission error:', error.response?.data || error.message);
-      emit('show-message', `Failed to submit answer: ${error.response?.data?.message || error.message}`);
+      console.error('Submission error for question', questionId, ':', error.response?.status, error.response?.data || error.message);
+      let errorMessage = 'Failed to submit answer. It will be retried later.';
+      if (error.response?.status === 404) {
+        console.warn('Answer submission endpoint not found. Ensure backend has POST /api/student-courses/submit-answer route. Check server logs and restart if necessary.');
+        errorMessage = 'Answer submission failed due to missing endpoint. Answer cached for retry. Please contact support if this persists.';
+      } else if (error.response?.data?.message) {
+        errorMessage = `Failed to submit answer: ${error.response.data.message}`;
+      }
+      emit('show-message', errorMessage);
       pendingSubmissions.value.push(submission);
       submittedAnswers.value.push({
         questionId,
@@ -707,6 +730,8 @@ export function useCourseFeatures(props, emit) {
     } catch (error) {
       console.error('Error submitting exam:', error.response?.data || error.message);
       emit('show-message', `Failed to submit exam: ${error.response?.data?.message || error.message}. Your answers are cached and will be retried.`);
+      pendingSubmissions.value.push(submissionData);
+      saveAnswersToCache();
       isExamStarted.value = false;
       isExamPaused.value = false;
       await exitFullScreen();
@@ -750,12 +775,12 @@ export function useCourseFeatures(props, emit) {
 
     const detectScreenshot = (e) => {
       const isScreenshotKey =
-        e.key === 'PrintScreen' ||
-        (e.metaKey && e.shiftKey && e.key === 'S') ||
-        (e.ctrlKey && e.altKey && e.key === 'S') ||
-        (e.altKey && e.key === 'PrintScreen') ||
-        (e.metaKey && e.key === 'S') ||
-        (e.ctrlKey && e.shiftKey && e.key === 'S');
+        e.code === 'PrintScreen' ||
+        (e.metaKey && e.shiftKey && e.code === 'KeyS') ||
+        (e.ctrlKey && e.altKey && e.code === 'KeyS') ||
+        (e.altKey && e.code === 'PrintScreen') ||
+        (e.metaKey && e.code === 'KeyS') ||
+        (e.ctrlKey && e.shiftKey && e.code === 'KeyS');
       if (isScreenshotKey) {
         e.preventDefault();
         logMalpractice('screenshot_key');
@@ -765,7 +790,7 @@ export function useCourseFeatures(props, emit) {
     document.addEventListener('keydown', detectScreenshot);
 
     const detectCriticalActions = async (e) => {
-      if (e.key === 'Escape' || e.key === 'F11') {
+      if (e.code === 'Escape' || e.code === 'F11') {
         e.preventDefault();
         console.log('Detected Esc or F11 key press, logging as critical action');
         await logMalpractice('critical_action');
@@ -844,7 +869,7 @@ export function useCourseFeatures(props, emit) {
     }
   }
 
-  function handleMalpractice(type) {
+  async function handleMalpractice(type) {
     malpracticeAttempts.value[type] = (malpracticeAttempts.value[type] || 0) + 1;
     const totalAttempts = Object.values(malpracticeAttempts.value).reduce((sum, count) => sum + count, 0);
     console.log(`Malpractice attempt (${type}):`, malpracticeAttempts.value[type], 'Total attempts:', totalAttempts);
@@ -857,7 +882,7 @@ export function useCourseFeatures(props, emit) {
       examStatus.value[selectedCourse.value?.id] = 'Your Exam Auto Evaluated';
       console.log('Your Exam Auto Evaluated Due to Malpractice');
 
-      // Log the answers being sent to the backend for auto-evaluation
+      // Log answers being sent for auto-evaluation
       const allQuestions = [...questions.value.phase1, ...questions.value.phase2];
       const answersToSubmit = allQuestions.map(question => ({
         questionId: question.id,
@@ -867,7 +892,18 @@ export function useCourseFeatures(props, emit) {
       }));
       console.log('Submitting answers for auto-evaluation due to malpractice:', answersToSubmit);
 
-      submitExam(true);
+      // Update course status
+      const courseIndex = props.courses.findIndex(c => c.id === selectedCourse.value?.id);
+      if (courseIndex !== -1) {
+        props.courses[courseIndex] = {
+          ...props.courses[courseIndex],
+          hasMalpractice: true,
+        };
+      }
+
+      // Submit exam with malpractice flag
+      await submitExam(true);
+      saveAnswersToCache();
       goBackToCourses();
     }
   }

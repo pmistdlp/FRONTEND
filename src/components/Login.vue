@@ -149,7 +149,7 @@
 
     <!-- Footer (Fixed at Bottom) -->
     <footer class="py-4 px-4 sm:px-6 lg:px-8 bg-gray-50 text-center text-gray-600 text-xs sm:text-sm shadow-inner">
-      <p>Developed by <span class="font-semibold"><a href="https://salmanparis.tech/" target="_blank">Salman Paris</a></span> | © 2025 Department Of Informatics</p>
+      <p>Developed by <span class="font-semibold"><a href="https://salmanparis.tech/" target="_blank">VISTA</a></span> | © 2025 Department Of Informatics</p>
     </footer>
   </div>
 </template>
@@ -238,28 +238,11 @@ export default {
     goToPMU() {
       window.location.href = 'https://pmu.edu';
     },
-    async fetchOpenCourses() {
-      try {
-        const { data } = await axios.get('/api/public-enrollment');
-        console.log('Fetched courses:', data);
-        this.openCourses = data.filter(course => course.isRegistrationOpen);
-        console.log('Filtered open courses:', this.openCourses);
-      } catch (err) {
-        console.error('Error fetching open courses:', err.response ? err.response.status : err.message);
-        this.error = 'Failed to load courses. Check server connection.';
-      }
-    },
     goToEnrollment(courseId) {
       console.log('Navigating to enrollment for courseId:', courseId);
       console.log('Current user before navigation:', JSON.parse(localStorage.getItem('user')) || 'No user');
       this.$router.push({ name: 'Enrollment', params: { courseId } });
     },
-  },
-  created() {
-    // Clear localStorage on component creation to ensure clean state
-    localStorage.removeItem('user');
-    console.log('Cleared localStorage on Login.vue creation');
-    this.fetchOpenCourses();
   },
   directives: {
     'no-right-click': {

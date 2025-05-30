@@ -283,7 +283,7 @@
                     <li class="inline-block">
                       <span :class="{ 'correct-answer': q.answer === 'option2' }" 
                             class="inline-block px-3 py-1 rounded-md mathjax-content">{{ q.option2 }}</span>
-                      <img v-if="baseURL && q.option1Image" :src="q.option1Image" alt="Option 2 Image" 
+                      <img v-if="baseURL && q.option2Image" :src="q.option2Image" alt="Option 2 Image" 
                            class="mt-2 max-w-xs h-auto rounded-md" />
                     </li>
                     <li class="inline-block">
@@ -352,8 +352,8 @@ export default defineComponent({
   },
   data() {
     return {
-      baseURL: '', // Store resolved base URL
-      api: null, // Store Axios instance
+      baseURL: '',
+      api: null,
       question: { 
         coNumber: '', 
         kLevel: '', 
@@ -375,6 +375,7 @@ export default defineComponent({
         answer: '', 
         weightage: 1 
       },
+      coDetails: [], // Store fetched COs
       isLoading: false,
       isUploading: false,
       isEditing: false,
@@ -382,8 +383,8 @@ export default defineComponent({
       showBulkDeleteModal: false,
       showUploadPopup: false,
       questionIdToDelete: null,
-      selectedQuestions: [], // Store IDs of selected questions
-      selectAll: false, // State for "Select All" checkbox
+      selectedQuestions: [],
+      selectAll: false,
       file: null,
       extractedQuestions: [],
       mathJaxLoaded: false,
@@ -395,18 +396,6 @@ export default defineComponent({
     };
   },
   computed: {
-    coDetails() {
-      try {
-        if (this.selectedCourse?.coDetails) {
-          const parsed = JSON.parse(this.selectedCourse.coDetails);
-          return Array.isArray(parsed) ? parsed : [];
-        }
-        return [];
-      } catch (error) {
-        console.error('Error parsing coDetails:', error);
-        return [];
-      }
-    },
     selectedCOMaxKLevel() {
       if (!Array.isArray(this.coDetails) || !this.question.coNumber) {
         return 14;
@@ -422,16 +411,16 @@ export default defineComponent({
   watch: {
     selectedCourse(newVal, oldVal) {
       if (newVal && (!oldVal || newVal.id !== oldVal.id)) {
+        this.fetchCOs(newVal.id);
         this.question.coNumber = '';
         this.question.kLevel = '';
-        this.selectedQuestions = []; // Reset selection
+        this.selectedQuestions = [];
         this.selectAll = false;
         this.$nextTick(() => this.debouncedTypesetMathJax());
       }
     },
     questions: {
       handler() {
-        // Reset selection if questions change (e.g., after deletion)
         this.selectedQuestions = this.selectedQuestions.filter(id => 
           this.questions.some(q => q.id === id)
         );
@@ -447,18 +436,16 @@ export default defineComponent({
       deep: true,
     },
     selectedQuestions(newVal) {
-      // Update selectAll based on selected questions
       this.selectAll = newVal.length === this.questions.length && this.questions.length > 0;
     },
   },
   async created() {
-    // Initialize Axios client and baseURL
     try {
       this.baseURL = await apiConfig.getBaseURL();
       this.api = await this.getApiClient();
     } catch (error) {
       console.error('Failed to fetch base URL:', error);
-      this.baseURL = 'http://localhost:3000'; // Fallback
+      this.baseURL = 'http://localhost:3000';
       this.api = axios.create({
         baseURL: this.baseURL,
         withCredentials: true,
@@ -466,6 +453,7 @@ export default defineComponent({
       });
     }
     if (this.selectedCourse) {
+      this.fetchCOs(this.selectedCourse.id);
       this.$emit('fetchQuestions', this.selectedCourse.id);
     }
   },
@@ -477,6 +465,22 @@ export default defineComponent({
         withCredentials: true,
         headers: { 'Content-Type': 'application/json' },
       });
+    },
+    async fetchCOs(courseId) {
+      this.isLoading = true;
+      try {
+        const response = await this.api.get(`/api/questions/${courseId}/cos`);
+        this.coDetails = response.data.coDetails || [];
+        if (response.data.coCount !== this.coDetails.length) {
+          console.warn(`CO count mismatch: expected ${response.data.coCount}, got ${this.coDetails.length}`);
+        }
+      } catch (error) {
+        console.error('Error fetching COs:', error.response?.data || error.message);
+        alert(`Failed to fetch COs: ${error.response?.data.error || error.message}`);
+        this.coDetails = [];
+      } finally {
+        this.isLoading = false;
+      }
     },
     updateKLevelOptions() {
       this.question.kLevel = '';
@@ -503,14 +507,12 @@ export default defineComponent({
       const file = event.target.files[0];
       if (!file) return;
 
-      // Validate file size (1MB)
       if (file.size > 1024 * 1024) {
         alert('Image size must be less than 1MB.');
         event.target.value = '';
         return;
       }
 
-      // Validate file type
       const allowedTypes = ['image/jpeg', 'image/png'];
       if (!allowedTypes.includes(file.type)) {
         alert('Only JPEG and PNG images are allowed.');
@@ -518,7 +520,6 @@ export default defineComponent({
         return;
       }
 
-      // Set file and preview
       this.question[field] = file;
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -543,7 +544,6 @@ export default defineComponent({
         formData.append('userType', 'admin');
         formData.append('userId', this.user.id);
 
-        // Append images if they exist
         if (this.question.questionImage) formData.append('questionImage', this.question.questionImage);
         if (this.question.option1Image) formData.append('option1Image', this.question.option1Image);
         if (this.question.option2Image) formData.append('option2Image', this.question.option2Image);
@@ -598,7 +598,6 @@ export default defineComponent({
         formData.append('userType', 'admin');
         formData.append('userId', this.user.id);
 
-        // Append images if they exist
         if (this.question.questionImage) formData.append('questionImage', this.question.questionImage);
         if (this.question.option1Image) formData.append('option1Image', this.question.option1Image);
         if (this.question.option2Image) formData.append('option2Image', this.question.option2Image);
@@ -923,7 +922,7 @@ button:hover {
 
 .mathjax-content {
   display: inline-block;
-  min-height: 1.5em; /* Ensure space for rendered equations */
+  min-height: 1.5em;
 }
 
 @media (max-width: 640px) {

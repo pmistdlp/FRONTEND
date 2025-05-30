@@ -27,7 +27,7 @@
             <label for="course-code" class="block text-xs font-medium text-gray-700 mb-1">Course Code (optional)</label>
             <input
               id="course-code"
-              v-model="course.course_code"
+              v-model="course.courseCode"
               placeholder="Enter course code"
               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 text-sm"
             />
@@ -36,7 +36,7 @@
             <label for="learning-platform" class="block text-xs font-medium text-gray-700 mb-1">Learning Platform</label>
             <select
               id="learning-platform"
-              v-model="course.learning_platform"
+              v-model="course.learningPlatform"
               required
               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 text-sm"
             >
@@ -150,7 +150,9 @@
     <!-- Course List -->
     <div class="bg-gray-50 p-4 rounded-lg shadow-sm border border-gray-200 max-h-[400px] overflow-y-auto scrollbar-hidden">
       <h3 class="text-base font-semibold text-blue-500 mb-4">Course List</h3>
-      <table class="min-w-full bg-white border border-gray-200 rounded-md text-sm">
+      <div v-if="isLoadingCourses" class="text-center text-gray-500">Loading courses...</div>
+      <div v-else-if="!normalizedCourses.length" class="text-center text-gray-500">No courses available</div>
+      <table v-else class="min-w-full bg-white border border-gray-200 rounded-md text-sm">
         <thead class="sticky top-0 bg-gray-100">
           <tr>
             <th class="py-2 px-3 text-left text-gray-600 font-semibold border-b border-gray-200">Name</th>
@@ -166,7 +168,7 @@
           </tr>
         </thead>
         <transition-group name="list" tag="tbody">
-          <tr v-for="c in courses" :key="c.id" class="hover:bg-gray-50 transition-all duration-200">
+          <tr v-for="c in normalizedCourses" :key="c.id" class="hover:bg-gray-50 transition-all duration-200">
             <td class="py-2 px-3 border-b border-gray-200">
               <button @click="selectCourse(c)" 
                       class="w-full text-left bg-blue-500 text-white px-3 py-1 rounded-md hover:bg-blue-600 
@@ -178,11 +180,11 @@
                 </span>
               </button>
             </td>
-            <td class="py-2 px-3 border-b border-gray-200">{{ c.course_code || 'N/A' }}</td>
-            <td class="py-2 px-3 border-b border-gray-200">{{ c.learning_platform }}</td>
+            <td class="py-2 px-3 border-b border-gray-200">{{ c.courseCode || 'N/A' }}</td>
+            <td class="py-2 px-3 border-b border-gray-200">{{ c.learningPlatform || 'N/A' }}</td>
             <td class="py-2 px-3 border-b border-gray-200">{{ c.examDate || 'N/A' }}</td>
             <td class="py-2 px-3 border-b border-gray-200">{{ c.examTime ? `${c.examTime} IST` : 'N/A' }}</td>
-            <td class="py-2 px-3 border-b border-gray-200">{{ c.totalQuestions }} Qs</td>
+            <td class="py-2 px-3 border-b border-gray-200">{{ c.totalQuestions || 0 }} Qs</td>
             <td class="py-2 px-3 border-b border-gray-200">{{ c.examQuestionCount || 'N/A' }}</td>
             <td class="py-2 px-3 border-b border-gray-200">{{ c.coCount || 0 }}</td>
             <td class="py-2 px-3 border-b border-gray-200">{{ c.isDraft ? 'Draft' : 'Pushed' }}</td>
@@ -192,7 +194,7 @@
                 <PencilIcon class="w-4 h-4" />
                 <span>Edit</span>
               </button>
-              <button @click="showDeletePopup(c.id)" 
+              <button @click="showDeletePopup(c)" 
                       class="bg-red-500 text-white px-3 py-1 rounded-md hover:bg-red-700 transition-all duration-200 flex items-center space-x-1 text-sm">
                 <TrashIcon class="w-4 h-4" />
                 <span>Delete</span>
@@ -235,11 +237,11 @@
             </div>
             <div>
               <label class="block text-xs font-medium text-gray-700 mb-1">Course Code</label>
-              <input v-model="pushCourseData.course_code" readonly class="w-full px-3 py-2 bg-gray-100 border rounded-md text-sm" />
+              <input v-model="pushCourseData.courseCode" readonly class="w-full px-3 py-2 bg-gray-100 border rounded-md text-sm" />
             </div>
             <div>
               <label class="block text-xs font-medium text-gray-700 mb-1">Learning Platform</label>
-              <input v-model="pushCourseData.learning_platform" readonly class="w-full px-3 py-2 bg-gray-100 border rounded-md text-sm" />
+              <input v-model="pushCourseData.learningPlatform" readonly class="w-full px-3 py-2 bg-gray-100 border rounded-md text-sm" />
             </div>
             <div>
               <label class="block text-xs font-medium text-gray-700 mb-1">Exam Date</label>
@@ -304,11 +306,22 @@
       </div>
     </div>
 
-    <!-- Delete Course Popup -->
+    <!-- Delete Course Warning Modal -->
     <div v-if="showDeleteCourseModal" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
       <div class="bg-white p-4 rounded-lg shadow-lg border border-gray-200 w-full max-w-md">
-        <h3 class="text-base font-semibold text-red-500 mb-4">Confirm Deletion</h3>
-        <p class="text-gray-800 mb-4 text-sm">Are you sure you want to delete this course? This action cannot be undone.</p>
+        <h3 class="text-base font-semibold text-red-500 mb-4">Confirm Course Deletion</h3>
+        <p class="text-gray-800 mb-4 text-sm">
+          Are you sure you want to delete the course "<strong>{{ deleteCourseData.name }}</strong>"?
+          <span v-if="deleteCourseData.totalQuestions > 0 || deleteCourseData.totalStudentScores > 0">
+            This will also permanently delete:
+            <ul class="list-disc list-inside mt-2">
+              <li v-if="deleteCourseData.totalQuestions > 0">{{ deleteCourseData.totalQuestions }} question(s)</li>
+              <li v-if="deleteCourseData.totalStudentScores > 0">{{ deleteCourseData.totalStudentScores }} student score(s)</li>
+            </ul>
+          </span>
+          <span v-else>This course has no associated questions or student scores.</span>
+          This action cannot be undone.
+        </p>
         <div class="flex justify-end space-x-2">
           <button @click="confirmDeleteCourse" 
                   class="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600 transition-all duration-200 text-sm">
@@ -327,7 +340,7 @@
 <script>
 import axios from 'axios';
 import { defineComponent } from 'vue';
-import apiConfig from '@/config/apiConfig'; // Adjust the import path as needed
+import apiConfig from '@/config/apiConfig';
 import { PencilIcon, TrashIcon, PlayIcon, ArrowUturnLeftIcon, ArrowRightIcon, UserPlusIcon, UserMinusIcon } from '@heroicons/vue/24/solid';
 
 export default {
@@ -343,13 +356,15 @@ export default {
     return {
       isLoading: false,
       isEditing: false,
+      isLoadingCourses: false,
+      localCourses: [],
       course: {
         name: '',
-        course_code: '',
-        learning_platform: '',
+        courseCode: '',
+        learningPlatform: '',
         examDate: '',
         examTime: '',
-        examQuestionCount: '',
+        examQuestionCount: null,
         coCount: 0,
         coDetails: [],
       },
@@ -358,9 +373,30 @@ export default {
       showPushCourseModal: false,
       revokeCourseData: {},
       showRevokeCourseModal: false,
-      courseIdToDelete: null,
+      deleteCourseData: {}, // Store course data for deletion
       showDeleteCourseModal: false,
     };
+  },
+  computed: {
+    normalizedCourses() {
+      const courses = this.courses.length ? this.courses : this.localCourses;
+      console.log('Courses for normalization:', courses);
+      return courses.map(course => ({
+        id: course.id,
+        name: course.name || 'N/A',
+        courseCode: course.courseCode || null,
+        learningPlatform: course.learningPlatform || 'N/A',
+        examDate: course.examDate || null,
+        examTime: course.examTime || '',
+        examQuestionCount: course.examQuestionCount || null,
+        coCount: course.coCount ?? 0,
+        coDetails: Array.isArray(course.coDetails) ? course.coDetails : course.coDetails ? JSON.parse(course.coDetails) : [],
+        isDraft: course.isDraft ?? true,
+        isRegistrationOpen: course.isRegistrationOpen ?? false,
+        totalQuestions: Number(course.totalQuestions) || 0,
+        totalStudentScores: Number(course.totalStudentScores) || 0, // New field
+      }));
+    },
   },
   watch: {
     'course.coCount'(newCount) {
@@ -379,6 +415,21 @@ export default {
     },
   },
   methods: {
+    async fetchCourses() {
+      this.isLoadingCourses = true;
+      try {
+        const client = await this.getApiClient();
+        const response = await client.get('/api/courses');
+        console.log('Fetched courses:', response.data);
+        this.localCourses = response.data;
+        this.$emit('fetchCourses', response.data);
+      } catch (error) {
+        console.error('Error fetching courses:', error);
+        alert('Failed to fetch courses. Please try again.');
+      } finally {
+        this.isLoadingCourses = false;
+      }
+    },
     async createCourse() {
       if (this.course.coCount > 0) {
         for (const co of this.course.coDetails) {
@@ -398,19 +449,21 @@ export default {
         const client = await this.getApiClient();
         const courseData = {
           ...this.course,
+          coCount: this.course.coCount || 0,
           coDetails: this.course.coCount > 0 ? this.course.coDetails : [],
-          examTime: this.course.examTime || null, // Ensure null if empty
+          examTime: this.course.examTime || null,
+          examQuestionCount: this.course.examQuestionCount || null,
         };
         const response = await client.post('/api/courses', courseData);
         alert(response.data.message);
-        this.$emit('fetchCourses');
+        await this.fetchCourses();
         this.course = {
           name: '',
-          course_code: '',
-          learning_platform: '',
+          courseCode: '',
+          learningPlatform: '',
           examDate: '',
           examTime: '',
-          examQuestionCount: '',
+          examQuestionCount: null,
           coCount: 0,
           coDetails: [],
         };
@@ -423,13 +476,17 @@ export default {
       }
     },
     editCourse(course) {
+      console.log('Editing course:', course);
       this.isEditing = true;
       this.course = {
         ...course,
-        course_code: course.course_code || '',
-        learning_platform: course.learning_platform,
+        courseCode: course.courseCode || '',
+        learningPlatform: course.learningPlatform || '',
+        coCount: course.coCount ?? 0,
         coDetails: Array.isArray(course.coDetails) ? course.coDetails : course.coDetails ? JSON.parse(course.coDetails) : [],
-        examTime: course.examTime || '', // Ensure examTime is a string
+        examTime: course.examTime || '',
+        examDate: course.examDate || '',
+        examQuestionCount: course.examQuestionCount ?? null,
       };
     },
     async confirmEditCourse() {
@@ -451,12 +508,14 @@ export default {
         const client = await this.getApiClient();
         const courseData = {
           ...this.course,
+          coCount: this.course.coCount || 0,
           coDetails: this.course.coCount > 0 ? this.course.coDetails : [],
-          examTime: this.course.examTime || null, // Ensure null if empty
+          examTime: this.course.examTime || null,
+          examQuestionCount: this.course.examQuestionCount || null,
         };
         const response = await client.put(`/api/courses/${this.course.id}`, courseData);
         alert(response.data.message);
-        this.$emit('fetchCourses');
+        await this.fetchCourses();
         this.cancelEdit();
       } catch (error) {
         console.error('Error updating course:', error);
@@ -470,11 +529,11 @@ export default {
       this.isEditing = false;
       this.course = {
         name: '',
-        course_code: '',
-        learning_platform: '',
+        courseCode: '',
+        learningPlatform: '',
         examDate: '',
         examTime: '',
-        examQuestionCount: '',
+        examQuestionCount: null,
         coCount: 0,
         coDetails: [],
       };
@@ -482,17 +541,20 @@ export default {
     showPushPopup(course) {
       this.pushCourseData = {
         ...course,
-        course_code: course.course_code || '',
-        learning_platform: course.learning_platform,
+        courseCode: course.courseCode || '',
+        learningPlatform: course.learningPlatform || '',
+        coCount: course.coCount ?? 0,
         coDetails: Array.isArray(course.coDetails) ? course.coDetails : course.coDetails ? JSON.parse(course.coDetails) : [],
-        examTime: course.examTime || '', // Ensure examTime is a string
+        examTime: course.examTime || '',
+        examDate: course.examDate || '',
+        examQuestionCount: course.examQuestionCount ?? null,
       };
       this.weightageDistribution = { 1: '', 2: '' };
       this.showPushCourseModal = true;
     },
     async confirmPushCourse() {
-      if (!this.pushCourseData.examTime) {
-        alert('Exam Time is required to push the course.');
+      if (!this.pushCourseData.examTime || !this.pushCourseData.examDate || !this.pushCourseData.examQuestionCount) {
+        alert('Exam Date, Time, and Question Count are required to push the course.');
         return;
       }
       this.isLoading = true;
@@ -500,19 +562,19 @@ export default {
         const client = await this.getApiClient();
         await client.put(`/api/courses/${this.pushCourseData.id}`, {
           name: this.pushCourseData.name,
-          course_code: this.pushCourseData.course_code,
-          learning_platform: this.pushCourseData.learning_platform,
+          courseCode: this.pushCourseData.courseCode,
+          learningPlatform: this.pushCourseData.learningPlatform,
           examDate: this.pushCourseData.examDate,
           examTime: this.pushCourseData.examTime,
           examQuestionCount: this.pushCourseData.examQuestionCount,
           examMarks: this.pushCourseData.examMarks,
-          coCount: this.pushCourseData.coCount,
+          coCount: this.pushCourseData.coCount || 0,
           coDetails: this.pushCourseData.coCount > 0 ? this.pushCourseData.coDetails : [],
           weightageDistribution: this.weightageDistribution,
-          isDraft: 0,
+          isDraft: false,
         });
         alert('Course successfully pushed for test');
-        this.$emit('fetchCourses');
+        await this.fetchCourses();
         this.closePushCourseModal();
       } catch (error) {
         console.error('Error pushing course:', error);
@@ -530,10 +592,13 @@ export default {
     showRevokePopup(course) {
       this.revokeCourseData = {
         ...course,
-        course_code: course.course_code || '',
-        learning_platform: course.learning_platform,
+        courseCode: course.courseCode || '',
+        learningPlatform: course.learningPlatform || '',
+        coCount: course.coCount ?? 0,
         coDetails: Array.isArray(course.coDetails) ? course.coDetails : course.coDetails ? JSON.parse(course.coDetails) : [],
-        examTime: course.examTime || '', // Ensure examTime is a string
+        examTime: course.examTime || '',
+        examDate: course.examDate || '',
+        examQuestionCount: course.examQuestionCount ?? null,
       };
       this.showRevokeCourseModal = true;
     },
@@ -543,13 +608,14 @@ export default {
         const client = await this.getApiClient();
         await client.put(`/api/courses/${this.revokeCourseData.id}`, {
           ...this.revokeCourseData,
+          coCount: this.revokeCourseData.coCount || 0,
           coDetails: this.revokeCourseData.coCount > 0 ? this.revokeCourseData.coDetails : [],
-          isDraft: 1,
-          isRegistrationOpen: 0,
-          examTime: this.revokeCourseData.examTime || null, // Ensure null if empty
+          isDraft: true,
+          isRegistrationOpen: false,
+          examTime: this.revokeCourseData.examTime || null,
         });
         alert('Course revoked to draft');
-        this.$emit('fetchCourses');
+        await this.fetchCourses();
         this.closeRevokeCourseModal();
       } catch (error) {
         console.error('Error revoking course:', error);
@@ -563,17 +629,22 @@ export default {
       this.showRevokeCourseModal = false;
       this.revokeCourseData = {};
     },
-    showDeletePopup(id) {
-      this.courseIdToDelete = id;
+    showDeletePopup(course) {
+      this.deleteCourseData = {
+        id: course.id,
+        name: course.name,
+        totalQuestions: course.totalQuestions || 0,
+        totalStudentScores: course.totalStudentScores || 0,
+      };
       this.showDeleteCourseModal = true;
     },
     async confirmDeleteCourse() {
       this.isLoading = true;
       try {
         const client = await this.getApiClient();
-        await client.delete(`/api/courses/${this.courseIdToDelete}`);
-        alert('Course deleted');
-        this.$emit('fetchCourses');
+        await client.delete(`/api/courses/${this.deleteCourseData.id}`);
+        alert('Course and associated records deleted successfully');
+        await this.fetchCourses();
         this.closeDeleteCourseModal();
       } catch (error) {
         console.error('Error deleting course:', error);
@@ -585,7 +656,7 @@ export default {
     },
     closeDeleteCourseModal() {
       this.showDeleteCourseModal = false;
-      this.courseIdToDelete = null;
+      this.deleteCourseData = {};
     },
     selectCourse(course) {
       this.$emit('selectCourse', course);
@@ -594,9 +665,9 @@ export default {
       this.isLoading = true;
       try {
         const client = await this.getApiClient();
-        const response = await client.put(`/api/courses/${course.id}/toggle-registration`, { isRegistrationOpen: 1 });
+        const response = await client.put(`/api/courses/${course.id}/toggle-registration`, { isRegistrationOpen: true });
         alert(response.data.message);
-        this.$emit('fetchCourses');
+        await this.fetchCourses();
       } catch (error) {
         console.error('Error opening registration:', error);
         const errorMessage = error.response?.data?.error || 'Failed to open registration. Please try again.';
@@ -609,9 +680,9 @@ export default {
       this.isLoading = true;
       try {
         const client = await this.getApiClient();
-        const response = await client.put(`/api/courses/${course.id}/toggle-registration`, { isRegistrationOpen: 0 });
+        const response = await client.put(`/api/courses/${course.id}/toggle-registration`, { isRegistrationOpen: false });
         alert(response.data.message);
-        this.$emit('fetchCourses');
+        await this.fetchCourses();
       } catch (error) {
         console.error('Error closing registration:', error);
         const errorMessage = error.response?.data?.error || 'Failed to close registration. Please try again.';
@@ -631,7 +702,7 @@ export default {
     },
   },
   created() {
-    this.$emit('fetchCourses');
+    this.fetchCourses();
   },
 };
 </script>
@@ -670,7 +741,6 @@ button:hover {
   transform: translateY(-1px);
 }
 
-/* Simplified date/time input styling */
 input[type="date"],
 input[type="time"] {
   appearance: none;

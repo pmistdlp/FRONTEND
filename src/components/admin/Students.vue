@@ -1,4 +1,3 @@
-```vue
 <template>
   <div class="space-y-6 p-4 bg-white text-gray-800">
     <!-- Loading Overlay -->
@@ -137,9 +136,7 @@
               </td>
               <td class="py-2 px-3 border-b border-gray-200">
                 <div class="relative group">
-                  <!-- If photo exists, show green tick icon -->
                   <CheckCircleIcon v-if="s.photo" class="w-8 h-8 text-green-500" />
-                  <!-- If no photo, show letter avatar -->
                   <div
                     v-else
                     class="w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center bg-blue-100 text-blue-600 text-xs font-semibold"
@@ -147,7 +144,6 @@
                   >
                     {{ getInitials(s.name) }}
                   </div>
-                  <!-- Tooltip for photo presence -->
                   <span
                     v-if="s.photo"
                     class="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
@@ -158,11 +154,8 @@
               </td>
               <td class="py-2 px-3 border-b border-gray-200">
                 <div class="relative group">
-                  <!-- If eSignature exists, show green tick icon -->
                   <CheckCircleIcon v-if="s.eSignature" class="w-8 h-8 text-green-500" />
-                  <!-- If no eSignature, show red cross icon -->
                   <XCircleIcon v-else class="w-8 h-8 text-red-500" />
-                  <!-- Tooltip for eSignature presence -->
                   <span
                     class="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
                   >
@@ -243,11 +236,17 @@
         <p class="text-gray-800 mb-4 text-sm">Are you sure you want to delete this student? This action cannot be undone.</p>
         <div class="flex justify-end space-x-2">
           <button @click="confirmDeleteStudent" 
-                  class="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600 transition-all duration-200 text-sm">
-            Delete
+                  :disabled="isDeleting"
+                  class="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600 disabled:bg-gray-400 transition-all duration-200 text-sm flex items-center">
+            <svg v-if="isDeleting" class="animate-spin h-5 w-5 mr-2 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            {{ isDeleting ? 'Deleting...' : 'Delete' }}
           </button>
           <button @click="closeDeleteStudentModal" 
-                  class="bg-gray-200 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-300 transition-all duration-200 text-sm">
+                  :disabled="isDeleting"
+                  class="bg-gray-200 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-300 disabled:bg-gray-300 transition-all duration-200 text-sm">
             Cancel
           </button>
         </div>
@@ -266,11 +265,17 @@
         </p>
         <div class="flex justify-end space-x-2">
           <button @click="confirmBulkDelete" 
-                  class="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600 transition-all duration-200 text-sm">
-            Delete
+                  :disabled="isDeleting"
+                  class="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600 disabled:bg-gray-400 transition-all duration-200 text-sm flex items-center">
+            <svg v-if="isDeleting" class="animate-spin h-5 w-5 mr-2 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            {{ isDeleting ? 'Deleting...' : 'Delete' }}
           </button>
           <button @click="closeBulkDeleteConfirmationModal" 
-                  class="bg-gray-200 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-300 transition-all duration-200 text-sm">
+                  :disabled="isDeleting"
+                  class="bg-gray-200 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-300 disabled:bg-gray-300 transition-all duration-200 text-sm">
             Cancel
           </button>
         </div>
@@ -497,6 +502,7 @@ export default defineComponent({
       editingStudent: null,
       isLoading: false,
       isUploading: false,
+      isDeleting: false, // New loading state for deletions
       showDeleteStudentModal: false,
       showUploadPopup: false,
       showAssignConfirmationModal: false,
@@ -528,13 +534,22 @@ export default defineComponent({
   },
   computed: {
     filteredStudents() {
-      if (!this.searchQuery) return this.students;
+      if (!this.searchQuery) return this.normalizedStudents;
       const query = this.searchQuery.toLowerCase();
-      return this.students.filter(student =>
+      return this.normalizedStudents.filter(student =>
         student.name.toLowerCase().includes(query) ||
         student.registerNo.toLowerCase().includes(query)
       );
     },
+    normalizedStudents() {
+      return this.students.map(student => ({
+        ...student,
+        registerNo: student.registerno || student.registerNo || '',
+        aadharNumber: student.aadharnumber || student.aadharNumber || null,
+        abcId: student.abcid || student.abcId || null,
+        eSignature: student.esignature || student.eSignature || null
+      }));
+    }
   },
   watch: {
     filteredStudents: {
@@ -544,21 +559,27 @@ export default defineComponent({
         );
         this.selectAllStudents = this.selectedStudentIds.length === this.filteredStudents.length && this.filteredStudents.length > 0;
       },
-      immediate: true, // Run on initial load
+      immediate: true,
     },
+    students: {
+      handler(newVal) {
+        console.log('Students prop updated:', newVal);
+      },
+      deep: true
+    }
   },
   async created() {
     try {
       const baseURL = await apiConfig.getBaseURL();
       console.log('Setting axios baseURL:', baseURL);
-      this.baseUrl = baseURL || 'http://localhost:3000'; // Fallback to local if undefined
+      this.baseUrl = baseURL || 'http://localhost:3000';
       api.defaults.baseURL = this.baseUrl;
-      await api.get('/api/student/debug'); // Test connectivity
+      await api.get('/api/student/debug');
       this.$emit('fetchStudents');
       this.$emit('fetchCourses');
     } catch (error) {
       console.error('Failed to initialize API:', error);
-      this.baseUrl = 'http://localhost:3000'; // Fallback
+      this.baseUrl = 'http://localhost:3000';
       api.defaults.baseURL = this.baseUrl;
       this.$emit('fetchStudents');
       this.$emit('fetchCourses');
@@ -581,7 +602,7 @@ export default defineComponent({
         if (this.eSignatureFile) formData.append('eSignature', this.eSignatureFile);
 
         if (!this.student.dob || !this.student.dob.match(/^\d{8}$/)) {
-          throw new Error('DOB must be 8 digits (e.g., 28022025 or 12345678)');
+          throw new Error('DOB must be 8 digits (e.g., 28022025)');
         }
 
         let response;
@@ -594,7 +615,7 @@ export default defineComponent({
             headers: { 'Content-Type': 'multipart/form-data' },
           });
         }
-        console.log('Save student response:', response.data); // Log the response to verify the photo path
+        console.log('Save student response:', response.data);
         this.$emit('fetchStudents');
         this.$emit('fetchStudentHistory');
         this.resetStudentForm();
@@ -608,13 +629,24 @@ export default defineComponent({
     },
     editStudent(student) {
       this.editingStudent = student;
-      this.student = { ...student };
+      this.student = {
+        id: student.id,
+        name: student.name || '',
+        registerNo: student.registerno || student.registerNo || '',
+        dob: student.dob || '',
+        password: student.password || student.dob || '',
+        aadharNumber: student.aadharnumber || student.aadharNumber || '',
+        abcId: student.abcid || student.abcId || '',
+        photo: null,
+        eSignature: null
+      };
       this.studentPhoto = student.photo ? this.getImageUrl(student.photo) : null;
-      this.studentESignature = student.eSignature ? this.getImageUrl(student.eSignature) : null;
+      this.studentESignature = student.esignature || student.eSignature ? this.getImageUrl(student.esignature || student.eSignature) : null;
       this.photoFile = null;
       this.eSignatureFile = null;
       this.previewPhoto = null;
       this.previewESignature = null;
+      console.log('Editing student:', this.student);
     },
     resetStudentForm() {
       this.student = { name: '', registerNo: '', dob: '', password: '', aadharNumber: '', abcId: '', photo: null, eSignature: null };
@@ -637,11 +669,13 @@ export default defineComponent({
       this.showDeleteStudentModal = true;
     },
     async confirmDeleteStudent() {
-      this.isLoading = true;
+      if (this.isDeleting) return;
+      this.isDeleting = true;
       try {
         await api.delete(`/api/student/${this.studentIdToDelete}`, {
           data: { userType: 'admin', userId: this.user.id }
         });
+        alert('Student and associated records deleted successfully');
         this.$emit('fetchStudents');
         this.$emit('fetchStudentHistory');
         this.closeDeleteStudentModal();
@@ -650,7 +684,7 @@ export default defineComponent({
         console.error('Error deleting student:', errorMsg);
         alert(`Failed to delete student: ${errorMsg}`);
       } finally {
-        this.isLoading = false;
+        this.isDeleting = false;
       }
     },
     closeDeleteStudentModal() {
@@ -880,7 +914,8 @@ export default defineComponent({
       this.showBulkDeleteConfirmationModal = false;
     },
     async confirmBulkDelete() {
-      this.isLoading = true;
+      if (this.isDeleting) return;
+      this.isDeleting = true;
       try {
         console.log('Bulk deleting students:', this.selectedStudentIds);
         const response = await api.post('/api/student/bulk-delete', {
@@ -899,7 +934,7 @@ export default defineComponent({
         console.error('Error bulk deleting students:', errorMsg);
         alert(`Failed to bulk delete students: ${errorMsg}`);
       } finally {
-        this.isLoading = false;
+        this.isDeleting = false;
       }
     },
     showUnassignConfirmation(courseId) {
@@ -950,10 +985,9 @@ export default defineComponent({
         console.warn('Image path is empty');
         return null;
       }
-      // Ensure path starts with a slash and remove duplicate slashes
       const cleanPath = path.startsWith('/') ? path : `/${path}`;
       const url = `${this.baseUrl}${cleanPath}`.replace(/\/+/g, '/');
-      console.log('Constructed image URL:', url); // Log the URL for debugging
+      console.log('Constructed image URL:', url);
       return url;
     },
     handlePhotoUpload(event) {
@@ -1017,7 +1051,6 @@ export default defineComponent({
         this.studentESignature = null;
       }
     },
-    // Get initials from student name for fallback avatar
     getInitials(name) {
       if (!name) return 'N/A';
       const names = name.trim().split(' ');
@@ -1093,4 +1126,3 @@ input[type="checkbox"]:focus {
   color: #1e40af; /* Darker blue for text */
 }
 </style>
-```

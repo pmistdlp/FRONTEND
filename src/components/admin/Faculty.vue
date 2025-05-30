@@ -175,11 +175,10 @@
 import axios from 'axios';
 import { defineComponent } from 'vue';
 import { PencilIcon, TrashIcon, CheckCircleIcon } from '@heroicons/vue/24/solid';
-import apiConfig from '@/config/apiConfig'; // Import the apiConfig
+import apiConfig from '@/config/apiConfig';
 
-// Create an Axios instance with the baseURL
 const axiosInstance = axios.create({
-  baseURL: apiConfig.baseURL, // Use the baseURL from apiConfig
+  baseURL: apiConfig.baseURL,
 });
 
 export default defineComponent({
@@ -197,9 +196,14 @@ export default defineComponent({
       facultyIdToDelete: null,
       showUsernameWarning: false,
       showSuccessPopup: false,
-      successAction: '', // 'created', 'updated', or 'deleted'
+      successAction: '',
       successMessage: '',
     };
+  },
+  watch: {
+    facultyList(newList) {
+      console.log('Faculty List:', newList); // Debug to verify facultyId
+    },
   },
   methods: {
     async saveFaculty() {
@@ -258,11 +262,12 @@ export default defineComponent({
         const { data } = await axiosInstance.get(`/api/staff/${faculty.id}`);
         this.faculty = { 
           ...data, 
-          password: '', // Clear password fields for security
+          facultyId: data.facultyid, // Map facultyid to facultyId
+          password: '', 
           confirmPassword: '', 
-          isMaster: data.isMaster === 1 
+          isMaster: data.ismaster === 1 
         };
-        this.editingFaculty = data;
+        this.editingFaculty = { ...data, facultyId: data.facultyid };
       } catch (error) {
         console.error('Error fetching faculty details:', error.response ? error.response.data : error.message);
         alert(`Failed to load faculty details. Error: ${error.response ? error.response.data.error : error.message}`);
@@ -277,7 +282,6 @@ export default defineComponent({
     async confirmDelete() {
       this.isLoading = true;
       try {
-        // Fetch the faculty name before deletion for the success message
         const { data } = await axiosInstance.get(`/api/staff/${this.facultyIdToDelete}`);
         await axiosInstance.delete(`/api/staff/${this.facultyIdToDelete}`);
         this.showSuccessPopup = true;
@@ -316,15 +320,12 @@ export default defineComponent({
 </script>
 
 <style scoped>
-/* Flash card transition */
 .fade-enter-active, .fade-leave-active {
   transition: opacity 0.5s ease;
 }
 .fade-enter-from, .fade-leave-to {
   opacity: 0;
 }
-
-/* Input and Select Styles */
 input, select {
   transition: all 0.2s ease;
 }
@@ -333,13 +334,9 @@ input:focus, select:focus {
   border-color: #3b82f6;
   box-shadow: 0 0 0 1px #3b82f6;
 }
-
-/* Button Effects */
 button:hover {
   transform: translateY(-1px);
 }
-
-/* Table Transitions */
 .list-enter-active, .list-leave-active {
   transition: all 0.3s ease;
 }
