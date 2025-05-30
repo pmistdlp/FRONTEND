@@ -17,8 +17,24 @@ function debounce(func, wait) {
   };
 }
 
+// Retry function with exponential backoff
+async function retryOperation(operation, maxRetries = 5, baseDelay = 600) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (attempt === maxRetries) {
+        console.error(`Operation failed after ${maxRetries} attempts:`, error.response?.data || error.message);
+        throw error;
+      }
+      const delay = baseDelay * Math.pow(2, attempt - 1);
+      console.warn(`Retry attempt ${attempt} failed, retrying in ${delay}ms:`, error.message);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+
 export function useCourseFeatures(props, emit) {
-  // Create Axios instance inside the composable
   const api = axios.create({ withCredentials: true });
 
   // Reactive state
@@ -40,23 +56,25 @@ export function useCourseFeatures(props, emit) {
   const showExitModalFlag = ref(false);
   const isExamStarted = ref(false);
   const showMalpracticeWarning = ref(false);
-  const malpracticeAttempts = ref(0);
+  const malpracticeAttempts = ref({ right_click: 0, screenshot_key: 0, other: 0 });
   const hasMalpractice = ref(false);
   const isRestricted = ref(false);
   const baseUrl = ref('');
   const studentPhoto = ref(null);
   const examResults = ref(null);
   const showResultsView = ref(false);
+  const examStatus = ref({});
+  const pendingSubmissions = ref([]);
+  const submittedAnswers = ref([]);
 
-  // Hall ticket features
+  const isExamPaused = ref(false);
+
   const { isDownloading, downloadHallTicketForStudent } = useHallTicketFeatures(computed(() => props.user?.id), emit);
 
-  // Debounced MathJax typesetting
   const debouncedTypesetMathJax = debounce(() => {
     typesetMathJax();
   }, 300);
 
-  // Computed properties
   const canSubmit = computed(() => {
     const allQuestions = [...questions.value.phase1, ...questions.value.phase2];
     return allQuestions.every(question => questionStatuses.value[question.id] === 'submitted');
@@ -78,7 +96,6 @@ export function useCourseFeatures(props, emit) {
 
   const studentId = computed(() => props.user?.id);
 
-  // Cache functions
   function saveAnswersToCache() {
     if (!selectedCourse.value || !studentId.value) return;
     const cacheKey = `exam_${studentId.value}_${selectedCourse.value.id}`;
@@ -86,9 +103,15 @@ export function useCourseFeatures(props, emit) {
       selectedAnswers: selectedAnswers.value,
       questionStatuses: questionStatuses.value,
       examStartedAt: examStartedAt.value,
+      pendingSubmissions: pendingSubmissions.value,
+      submittedAnswers: submittedAnswers.value,
     };
-    localStorage.setItem(cacheKey, JSON.stringify(cacheData));
-    console.log('Answers saved to cache:', cacheData);
+    try {
+      localStorage.setItem(cacheKey, JSON.stringify(cacheData));
+      console.log('Answers saved to cache:', cacheData);
+    } catch (error) {
+      console.error('Error saving to cache:', error);
+    }
   }
 
   function restoreAnswersFromCache() {
@@ -97,7 +120,7 @@ export function useCourseFeatures(props, emit) {
     const cachedData = localStorage.getItem(cacheKey);
     if (cachedData) {
       try {
-        const { selectedAnswers: cachedAnswers, questionStatuses: cachedStatuses, examStartedAt: cachedStart } = JSON.parse(cachedData);
+        const { selectedAnswers: cachedAnswers, questionStatuses: cachedStatuses, examStartedAt: cachedStart, pendingSubmissions: cachedPending, submittedAnswers: cachedSubmitted } = JSON.parse(cachedData);
         const allQuestionIds = [...questions.value.phase1, ...questions.value.phase2].map(q => q.id);
         selectedAnswers.value = Object.keys(cachedAnswers)
           .filter(id => allQuestionIds.includes(id))
@@ -106,7 +129,10 @@ export function useCourseFeatures(props, emit) {
           .filter(id => allQuestionIds.includes(id))
           .reduce((obj, id) => ({ ...obj, [id]: cachedStatuses[id] }), {});
         examStartedAt.value = cachedStart;
+        pendingSubmissions.value = cachedPending || [];
+        submittedAnswers.value = cachedSubmitted || [];
         console.log('Answers restored from cache:', { selectedAnswers: selectedAnswers.value, questionStatuses: questionStatuses.value });
+        retryPendingSubmissions();
       } catch (error) {
         console.error('Error restoring cache:', error);
         clearCache();
@@ -119,9 +145,35 @@ export function useCourseFeatures(props, emit) {
     const cacheKey = `exam_${studentId.value}_${selectedCourse.value.id}`;
     localStorage.removeItem(cacheKey);
     console.log('Cache cleared for:', cacheKey);
+    pendingSubmissions.value = [];
+    submittedAnswers.value = [];
   }
 
-  // Watchers
+  async function retryPendingSubmissions() {
+    if (pendingSubmissions.value.length === 0) return;
+    const submissions = [...pendingSubmissions.value];
+    pendingSubmissions.value = [];
+    for (const submission of submissions) {
+      try {
+        if (!submission.studentId || !submission.courseId || !submission.questionId || !submission.selectedAnswer) {
+          console.error('Invalid pending submission:', submission);
+          continue;
+        }
+        await retryOperation(() => api.post('/api/student-courses/submit-answer', submission));
+        console.log(`Pending answer submitted for question ${submission.questionId}`);
+        submittedAnswers.value.push({
+          questionId: submission.questionId,
+          answer: submission.selectedAnswer,
+          timestamp: new Date().toISOString()
+        });
+      } catch (error) {
+        console.error(`Failed to retry submission for question ${submission.questionId}:`, error.response?.data || error.message);
+        pendingSubmissions.value.push(submission);
+      }
+    }
+    saveAnswersToCache();
+  }
+
   watch(
     () => selectedCourse.value,
     (newVal, oldVal) => {
@@ -151,6 +203,11 @@ export function useCourseFeatures(props, emit) {
     (newVal) => {
       emit('exam-status-changed', newVal);
       emit('toggle-dashboard', newVal);
+      if (newVal) {
+        document.body.style.overflow = 'hidden';
+      } else {
+        document.body.style.overflow = '';
+      }
     }
   );
 
@@ -158,18 +215,31 @@ export function useCourseFeatures(props, emit) {
     () => props.courses,
     (newVal) => {
       console.log('Courses prop updated:', newVal);
-    }
+      updateExamStatus();
+    },
+    { deep: true }
   );
 
   watch(
-    [selectedAnswers, questionStatuses],
+    [selectedAnswers, questionStatuses, pendingSubmissions, submittedAnswers],
     () => {
       saveAnswersToCache();
     },
     { deep: true }
   );
 
-  // Methods
+  watch(
+    showMalpracticeWarning,
+    (newVal) => {
+      isExamPaused.value = newVal;
+      if (newVal && timerInterval.value) {
+        clearInterval(timerInterval.value);
+      } else if (!newVal && isExamStarted.value) {
+        startTimer();
+      }
+    }
+  );
+
   async function initializeBaseUrl() {
     try {
       const baseURL = await apiConfig.getBaseURL();
@@ -178,8 +248,8 @@ export function useCourseFeatures(props, emit) {
       console.log('[Frontend] Base URL set to:', baseURL);
     } catch (error) {
       console.error('[Frontend] Failed to fetch base URL:', error);
-      api.defaults.baseURL = 'http://localhost:3000';
-      baseUrl.value = 'http://localhost:3000';
+      api.defaults.baseURL = process.env.VUE_APP_API_BASE_URL || 'http://localhost:3000';
+      baseUrl.value = api.defaults.baseURL;
       console.log('[Frontend] Using fallback base URL:', api.defaults.baseURL);
     }
   }
@@ -204,7 +274,6 @@ export function useCourseFeatures(props, emit) {
       }
     } catch (error) {
       console.error('Error fetching student photo:', error);
-      studentPhoto.value = null;
       emit('show-message', 'Failed to load student photo.');
     }
   }
@@ -233,20 +302,24 @@ export function useCourseFeatures(props, emit) {
       'YYYY-MM-DD HH:mm',
       'Asia/Kolkata'
     );
-    const windowEnd = examDateTime.clone().add(30, 'minutes');
+    const windowStart = examDateTime;
+    const windowEnd = examDateTime.clone().add(150, 'minutes');
 
     const isSameDate = now.isSame(examDateTime, 'day');
-    const isWithinTime = now.isBetween(examDateTime, windowEnd, null, '[]');
+    const isWithinTime = now.isBetween(windowStart, windowEnd, null, '[]');
+    const isBeforeStart = now.isBefore(windowStart);
+    const isAfterEnd = now.isAfter(windowEnd);
 
-    if (!isSameDate || !isWithinTime) {
-      if (now.isBefore(examDateTime)) {
-        emit('show-message', 'Exam Not Yet Started');
-      } else {
-        emit('show-message', 'Exam Ended');
-      }
+    if (!isSameDate || isBeforeStart) {
+      examStatus.value[course.id] = 'Exam Not Yet Started';
       return false;
+    } else if (isAfterEnd) {
+      examStatus.value[course.id] = 'Exam Elapsed';
+      return false;
+    } else if (isWithinTime) {
+      return true;
     }
-    return true;
+    return false;
   }
 
   async function fetchISTTime() {
@@ -260,13 +333,28 @@ export function useCourseFeatures(props, emit) {
     }
   }
 
+  function updateExamStatus() {
+    props.courses.forEach(async (course) => {
+      if (course.hasCompleted && !course.hasMalpractice) {
+        examStatus.value[course.id] = 'Exam completed successfully';
+      } else if (course.hasMalpractice) {
+        examStatus.value[course.id] = 'Your Exam Auto Evaluated';
+      } else if (course.hasExited) {
+        examStatus.value[course.id] = 'You Have Exited from Exam';
+      } else {
+        await isWithinTimeWindow(course);
+      }
+    });
+  }
+
   async function attemptStartExam(course) {
     if (!course) return;
-    if (course.hasCompleted || course.hasMalpractice) {
-      emit('show-message', course.hasMalpractice ? 'Your Test Auto Evaluated Due to Malpractice' : 'You have already completed this exam.');
+    if (course.hasCompleted || course.hasMalpractice || course.hasExited) {
+      emit('show-message', examStatus.value[course.id] || 'Exam not available.');
       return;
     }
     if (!isEligible(course) || !isPaymentConfirmed(course) || !(await isWithinTimeWindow(course))) {
+      emit('show-message', examStatus.value[course.id] || 'Exam not available.');
       return;
     }
     isExamStarted.value = true;
@@ -329,18 +417,20 @@ export function useCourseFeatures(props, emit) {
     isRestricted.value = false;
     examResults.value = null;
     showResultsView.value = false;
-    malpracticeAttempts.value = 0;
+    malpracticeAttempts.value = { right_click: 0, screenshot_key: 0, other: 0 }; // Reset malpractice attempts
     hasMalpractice.value = false;
     showMalpracticeWarning.value = false;
+    pendingSubmissions.value = [];
+    submittedAnswers.value = [];
+    isExamPaused.value = false;
 
     await fetchStudentPhoto();
-
     startTimer();
 
     try {
       const baseURL = await apiConfig.getBaseURL();
       const url = `${baseURL}/api/student-courses/questions/${course.id}`;
-      const response = await api.get(url);
+      const response = await retryOperation(() => api.get(url));
       questions.value = {
         phase1: response.data.phase1 || [],
         phase2: response.data.phase2 || [],
@@ -355,6 +445,7 @@ export function useCourseFeatures(props, emit) {
       });
 
       restoreAnswersFromCache();
+      await retryPendingSubmissions();
 
       if (questions.value.phase1.length > 0) {
         currentPhase.value = 'phase1';
@@ -366,8 +457,8 @@ export function useCourseFeatures(props, emit) {
 
       await nextTick(() => debouncedTypesetMathJax());
     } catch (error) {
-      console.error('Error fetching questions:', error);
-      questionsError.value = `Failed to fetch questions: ${error.message}`;
+      console.error('Error fetching questions:', error.response?.data || error.message);
+      questionsError.value = `Failed to fetch questions: ${error.response?.data?.message || error.message}`;
     } finally {
       isQuestionsLoading.value = false;
       questionsLoaded.value = true;
@@ -376,10 +467,12 @@ export function useCourseFeatures(props, emit) {
 
   function startTimer() {
     if (timerInterval.value) clearInterval(timerInterval.value);
+    if (isExamPaused.value) return;
     timerInterval.value = setInterval(() => {
       if (remainingTime.value > 0) {
         remainingTime.value--;
       } else {
+        examStatus.value[selectedCourse.value?.id] = 'Exam Elapsed';
         submitExam(true);
       }
     }, 1000);
@@ -406,13 +499,14 @@ export function useCourseFeatures(props, emit) {
     examStartedAt.value = null;
     showExitModalFlag.value = false;
     isExamStarted.value = false;
-    malpracticeAttempts.value = 0;
+    malpracticeAttempts.value = { right_click: 0, screenshot_key: 0, other: 0 }; // Reset malpractice attempts
     showMalpracticeWarning.value = false;
     hasMalpractice.value = false;
     isRestricted.value = false;
     studentPhoto.value = null;
     examResults.value = null;
     showResultsView.value = false;
+    isExamPaused.value = false;
     clearCache();
     removeMalpracticePrevention();
     exitFullScreen();
@@ -423,7 +517,16 @@ export function useCourseFeatures(props, emit) {
   }
 
   async function confirmExit() {
+    examStatus.value[selectedCourse.value?.id] = 'You Have Exited from Exam';
+    const courseIndex = props.courses.findIndex(c => c.id === selectedCourse.value?.id);
+    if (courseIndex !== -1) {
+      props.courses[courseIndex] = {
+        ...props.courses[courseIndex],
+        hasExited: true,
+      };
+    }
     await submitExam(true);
+    saveAnswersToCache();
     goBackToCourses();
   }
 
@@ -479,35 +582,68 @@ export function useCourseFeatures(props, emit) {
   }
 
   function selectOption(questionId, option) {
-    if (questionStatuses.value[questionId] === 'submitted') return;
+    if (questionStatuses.value[questionId] === 'submitted' || isExamPaused.value) return;
     selectedAnswers.value[questionId] = option;
     console.log('Selected answers:', selectedAnswers.value);
     saveAnswersToCache();
   }
 
   function markForReview(questionId) {
+    if (questionStatuses.value[questionId] === 'submitted' || isExamPaused.value) return;
     questionStatuses.value[questionId] = 'review';
     console.log('Question statuses:', questionStatuses.value);
     saveAnswersToCache();
     navigateNext();
   }
 
-  function submitAnswer(questionId) {
+  async function submitAnswer(questionId) {
+    if (isExamPaused.value) return;
     if (!selectedAnswers.value[questionId]) {
       emit('show-message', 'Please select an option before submitting.');
       return;
     }
+    const submission = {
+      studentId: studentId.value,
+      courseId: selectedCourse.value?.id,
+      questionId,
+      selectedAnswer: selectedAnswers.value[questionId],
+    };
+    if (!submission.studentId || !submission.courseId || !submission.questionId || !submission.selectedAnswer) {
+      console.error('Invalid submission data:', submission);
+      emit('show-message', 'Invalid submission data. Please try again.');
+      return;
+    }
     questionStatuses.value[questionId] = 'submitted';
-    console.log('Question statuses:', questionStatuses.value);
-    saveAnswersToCache();
-    navigateNext();
+    try {
+      await retryOperation(() => api.post('/api/student-courses/submit-answer', submission));
+      console.log(`Answer submitted for question ${questionId}`);
+      submittedAnswers.value.push({
+        questionId,
+        answer: selectedAnswers.value[questionId],
+        timestamp: new Date().toISOString()
+      });
+      saveAnswersToCache();
+      emit('show-message', 'Answer submitted successfully.');
+      navigateNext();
+    } catch (error) {
+      console.error('Submission error:', error.response?.data || error.message);
+      emit('show-message', `Failed to submit answer: ${error.response?.data?.message || error.message}`);
+      pendingSubmissions.value.push(submission);
+      submittedAnswers.value.push({
+        questionId,
+        answer: selectedAnswers.value[questionId],
+        timestamp: new Date().toISOString()
+      });
+      saveAnswersToCache();
+      await retryPendingSubmissions();
+      navigateNext();
+    }
   }
 
   async function submitExam(isAutoSubmit = false) {
     console.log('Submitting exam, isAutoSubmit:', isAutoSubmit);
-
     if (timerInterval.value) clearInterval(timerInterval.value);
-
+    await retryPendingSubmissions();
     const allQuestions = [...questions.value.phase1, ...questions.value.phase2];
     const answers = allQuestions.map(question => ({
       questionId: question.id,
@@ -515,47 +651,67 @@ export function useCourseFeatures(props, emit) {
       status: questionStatuses.value[question.id] || 'default',
       startTime: examStartedAt.value,
     }));
-
+    const submissionData = {
+      studentId: studentId.value,
+      courseId: selectedCourse.value?.id,
+      answers,
+      isMalpractice: hasMalpractice.value,
+    };
+    if (!submissionData.studentId || !submissionData.courseId || !submissionData.answers.length) {
+      console.error('Invalid exam submission data:', submissionData);
+      emit('show-message', 'Invalid exam data. Please try again.');
+      return;
+    }
     try {
-      console.log('Sending exam submission to server:', { studentId: studentId.value, courseId: selectedCourse.value?.id, answers });
-      const response = await api.post('/api/student-courses/submit-exam', {
-        studentId: studentId.value,
-        courseId: selectedCourse.value?.id,
-        answers,
-        isMalpractice: hasMalpractice.value || isAutoSubmit,
-      });
+      console.log('Sending exam submission to server:', submissionData);
+      const response = await retryOperation(() => api.post('/api/student-courses/submit-exam', submissionData));
       console.log('Exam submission response:', response.data);
-
-      // Store results from the server
       examResults.value = response.data.results || { marks: [], totalMarks: 0 };
       showResultsView.value = true;
-
       const courseIndex = props.courses.findIndex(c => c.id === selectedCourse.value?.id);
       if (courseIndex !== -1) {
         props.courses[courseIndex] = {
           ...props.courses[courseIndex],
-          hasCompleted: true,
-          hasMalpractice: hasMalpractice.value || isAutoSubmit,
+          hasCompleted: !isAutoSubmit && !hasMalpractice.value,
+          hasMalpractice: hasMalpractice.value,
+          hasExited: isAutoSubmit && examStatus.value[selectedCourse.value?.id] === 'You Have Exited from Exam',
         };
+        // Update examStatus explicitly
+        if (!isAutoSubmit && !hasMalpractice.value) {
+          examStatus.value[selectedCourse.value?.id] = 'Exam completed successfully';
+        } else if (hasMalpractice.value) {
+          examStatus.value[selectedCourse.value?.id] = 'Your Exam Auto Evaluated';
+        } else if (isAutoSubmit && examStatus.value[selectedCourse.value?.id] === 'You Have Exited from Exam') {
+          examStatus.value[selectedCourse.value?.id] = 'You Have Exited from Exam';
+        } else if (isAutoSubmit && examStatus.value[selectedCourse.value?.id] === 'Exam Elapsed') {
+          examStatus.value[selectedCourse.value?.id] = 'Exam Elapsed';
+        }
       }
-
       showMalpracticeWarning.value = false;
-      const message = isAutoSubmit ? 'Your Test Auto Evaluated Due to Malpractice' : response.data.message;
+      let message;
+      if (hasMalpractice.value) {
+        message = 'Your Exam Auto Evaluated Due to Malpractice';
+      } else if (isAutoSubmit && examStatus.value[selectedCourse.value?.id] === 'You Have Exited from Exam') {
+        message = 'You Have Exited from Exam';
+      } else if (isAutoSubmit && examStatus.value[selectedCourse.value?.id] === 'Exam Elapsed') {
+        message = 'Exam Time Elapsed';
+      } else {
+        message = 'Exam Completed Successfully';
+      }
       emit('show-message', message);
-
-      // Reset exam state immediately after submission
       isExamStarted.value = false;
+      isExamPaused.value = false;
       await exitFullScreen();
       removeMalpracticePrevention();
+      clearCache();
     } catch (error) {
-      console.error('Error submitting exam:', error);
-      emit('show-message', `Failed to submit exam: ${error.message}`);
-      isExamStarted.value = false; // Ensure reset even on error
+      console.error('Error submitting exam:', error.response?.data || error.message);
+      emit('show-message', `Failed to submit exam: ${error.response?.data?.message || error.message}. Your answers are cached and will be retried.`);
+      isExamStarted.value = false;
+      isExamPaused.value = false;
+      await exitFullScreen();
+      removeMalpracticePrevention();
     }
-  }
-
-  function reviewAnswers() {
-    showResultsView.value = true;
   }
 
   async function logMalpractice(type) {
@@ -568,7 +724,7 @@ export function useCourseFeatures(props, emit) {
       });
       console.log(`Malpractice logged: ${type}`);
     } catch (error) {
-      console.error('Error logging malpractice:', error);
+      console.error('Error logging malpractice:', error.response?.data || error.message);
     }
   }
 
@@ -585,19 +741,12 @@ export function useCourseFeatures(props, emit) {
   let malpracticeEventHandlers = null;
 
   function setupMalpracticePrevention() {
-    const preventCopy = (e) => {
+    const preventRightClick = (e) => {
       e.preventDefault();
-      logMalpractice('copy');
-      handleMalpractice();
+      logMalpractice('right_click');
+      handleMalpractice('right_click');
     };
-    document.addEventListener('copy', preventCopy);
-
-    const preventContextMenu = (e) => {
-      e.preventDefault();
-      logMalpractice('contextmenu');
-      handleMalpractice();
-    };
-    document.addEventListener('contextmenu', preventContextMenu);
+    document.addEventListener('contextmenu', preventRightClick);
 
     const detectScreenshot = (e) => {
       const isScreenshotKey =
@@ -605,11 +754,12 @@ export function useCourseFeatures(props, emit) {
         (e.metaKey && e.shiftKey && e.key === 'S') ||
         (e.ctrlKey && e.altKey && e.key === 'S') ||
         (e.altKey && e.key === 'PrintScreen') ||
+        (e.metaKey && e.key === 'S') ||
         (e.ctrlKey && e.shiftKey && e.key === 'S');
       if (isScreenshotKey) {
         e.preventDefault();
         logMalpractice('screenshot_key');
-        handleMalpractice();
+        handleMalpractice('screenshot_key');
       }
     };
     document.addEventListener('keydown', detectScreenshot);
@@ -617,25 +767,12 @@ export function useCourseFeatures(props, emit) {
     const detectCriticalActions = async (e) => {
       if (e.key === 'Escape' || e.key === 'F11') {
         e.preventDefault();
-        console.log('Detected Esc or F11 key press, auto-evaluating exam');
-        await logMalpractice('fullscreen_exit');
-        hasMalpractice.value = true;
-        await submitExam(true);
+        console.log('Detected Esc or F11 key press, logging as critical action');
+        await logMalpractice('critical_action');
+        handleMalpractice('other');
       }
     };
     document.addEventListener('keydown', detectCriticalActions);
-
-    const detectPageRefresh = async (e) => {
-      if (isExamStarted.value) {
-        e.preventDefault();
-        e.returnValue = '';
-        console.log('Detected page refresh attempt, auto-evaluating exam');
-        await logMalpractice('page_refresh');
-        hasMalpractice.value = true;
-        await submitExam(true);
-      }
-    };
-    window.addEventListener('beforeunload', detectPageRefresh);
 
     const detectClipboardImage = async (e) => {
       try {
@@ -643,7 +780,7 @@ export function useCourseFeatures(props, emit) {
         for (const item of items) {
           if (item.type.includes('image')) {
             logMalpractice('screenshot_clipboard');
-            handleMalpractice();
+            handleMalpractice('other');
           }
         }
       } catch (error) {
@@ -652,24 +789,24 @@ export function useCourseFeatures(props, emit) {
     };
     document.addEventListener('paste', detectClipboardImage);
 
-    const detectFocusLoss = () => {
+    const detectFocusLoss = debounce(() => {
       if (document.visibilityState === 'hidden') {
         logMalpractice('tab_switch');
-        handleMalpractice();
+        handleMalpractice('other');
       }
-    };
+    }, 1000);
     document.addEventListener('visibilitychange', detectFocusLoss);
 
-    const detectWindowBlur = () => {
+    const detectWindowBlur = debounce(() => {
       logMalpractice('window_blur');
-      handleMalpractice();
-    };
+      handleMalpractice('other');
+    }, 1000);
     window.addEventListener('blur', detectWindowBlur);
 
     const detectFullScreenExit = () => {
-      if (!document.fullscreenElement && !document.webkitFullscreenElement && !document.mozFullScreenElement && !document.msFullscreenElement) {
+      if (!document.fullscreenElement && !document.webkitFullscreenElement && !document.mozFullScreenElement && !document.msFullscreenElement && isExamStarted.value) {
         logMalpractice('fullscreen_exit');
-        handleMalpractice();
+        handleMalpractice('other');
       }
     };
     document.addEventListener('fullscreenchange', detectFullScreenExit);
@@ -678,11 +815,9 @@ export function useCourseFeatures(props, emit) {
     document.addEventListener('MSFullscreenChange', detectFullScreenExit);
 
     malpracticeEventHandlers = {
-      copy: preventCopy,
-      contextmenu: preventContextMenu,
-      keydown: detectScreenshot,
-      criticalActions: detectCriticalActions,
-      beforeunload: detectPageRefresh,
+      contextmenu: preventRightClick,
+      keydown_screenshot: detectScreenshot,
+      keydown_critical: detectCriticalActions,
       paste: detectClipboardImage,
       visibilitychange: detectFocusLoss,
       blur: detectWindowBlur,
@@ -695,10 +830,9 @@ export function useCourseFeatures(props, emit) {
 
   function removeMalpracticePrevention() {
     if (malpracticeEventHandlers) {
-      document.removeEventListener('copy', malpracticeEventHandlers.copy);
       document.removeEventListener('contextmenu', malpracticeEventHandlers.contextmenu);
-      document.removeEventListener('keydown', malpracticeEventHandlers.keydown);
-      document.removeEventListener('keydown', malpracticeEventHandlers.criticalActions);
+      document.removeEventListener('keydown', malpracticeEventHandlers.keydown_screenshot);
+      document.removeEventListener('keydown', malpracticeEventHandlers.keydown_critical);
       document.removeEventListener('paste', malpracticeEventHandlers.paste);
       document.removeEventListener('visibilitychange', malpracticeEventHandlers.visibilitychange);
       window.removeEventListener('blur', malpracticeEventHandlers.blur);
@@ -706,32 +840,64 @@ export function useCourseFeatures(props, emit) {
       document.removeEventListener('webkitfullscreenchange', malpracticeEventHandlers.webkitfullscreenchange);
       document.removeEventListener('mozfullscreenchange', malpracticeEventHandlers.mozfullscreenchange);
       document.removeEventListener('MSFullscreenChange', malpracticeEventHandlers.MSFullscreenChange);
-      window.removeEventListener('beforeunload', malpracticeEventHandlers.beforeunload);
       malpracticeEventHandlers = null;
     }
   }
 
-  function handleMalpractice() {
-    malpracticeAttempts.value += 1;
-    console.log('Malpractice attempt:', malpracticeAttempts.value);
+  function handleMalpractice(type) {
+    malpracticeAttempts.value[type] = (malpracticeAttempts.value[type] || 0) + 1;
+    const totalAttempts = Object.values(malpracticeAttempts.value).reduce((sum, count) => sum + count, 0);
+    console.log(`Malpractice attempt (${type}):`, malpracticeAttempts.value[type], 'Total attempts:', totalAttempts);
 
-    if (malpracticeAttempts.value === 1 || malpracticeAttempts.value === 2) {
+    if (malpracticeAttempts.value[type] === 1 || malpracticeAttempts.value[type] === 2) {
       showMalpracticeWarning.value = true;
-    } else if (malpracticeAttempts.value >= 3) {
+      console.log(`Warning: Suspicious ${type.replace('_', ' ')} detected (${malpracticeAttempts.value[type]}/2). Further attempts will lead to auto-evaluation.`);
+    } else if (totalAttempts >= 3) {
       hasMalpractice.value = true;
-      emit('show-message', 'Your Test Auto Evaluated Due to Malpractice');
+      examStatus.value[selectedCourse.value?.id] = 'Your Exam Auto Evaluated';
+      console.log('Your Exam Auto Evaluated Due to Malpractice');
+
+      // Log the answers being sent to the backend for auto-evaluation
+      const allQuestions = [...questions.value.phase1, ...questions.value.phase2];
+      const answersToSubmit = allQuestions.map(question => ({
+        questionId: question.id,
+        selectedAnswer: selectedAnswers.value[question.id] || null,
+        status: questionStatuses.value[question.id] || 'default',
+        startTime: examStartedAt.value,
+      }));
+      console.log('Submitting answers for auto-evaluation due to malpractice:', answersToSubmit);
+
       submitExam(true);
+      goBackToCourses();
     }
   }
 
   function dismissMalpracticeWarning() {
-    showMalpracticeWarning.value = false;
-    console.log('Malpractice warning dismissed');
+    try {
+      console.log('Dismiss malpractice warning button clicked at', new Date().toISOString());
+      console.log('Current state before dismissal:', {
+        showMalpracticeWarning: showMalpracticeWarning.value,
+        isExamPaused: isExamPaused.value,
+        isExamStarted: isExamStarted.value,
+      });
+      showMalpracticeWarning.value = false;
+      isExamPaused.value = false;
+      console.log('Malpractice warning dismissed');
+      console.log('State after dismissal:', {
+        showMalpracticeWarning: showMalpracticeWarning.value,
+        isExamPaused: isExamPaused.value,
+      });
+      if (isExamStarted.value) {
+        startTimer();
+      }
+    } catch (error) {
+      console.error('Error dismissing malpractice warning:', error);
+      console.log('Failed to dismiss warning. Please try again.');
+    }
   }
 
   async function typesetMathJax() {
     if (mathJaxFailed.value || !mathJaxLoaded.value) return;
-
     if (window.MathJax && window.MathJax.typesetPromise) {
       try {
         const elements = document.querySelectorAll('.mathjax-content');
@@ -753,7 +919,6 @@ export function useCourseFeatures(props, emit) {
       nextTick(() => debouncedTypesetMathJax());
       return;
     }
-
     const script = document.createElement('script');
     script.src = 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js';
     script.async = true;
@@ -789,9 +954,7 @@ export function useCourseFeatures(props, emit) {
   function setupMutationObserver() {
     const targetNode = document.querySelector('.space-y-6');
     if (!targetNode) return;
-
     const config = { childList: true, subtree: true };
-
     const callback = (mutationsList) => {
       for (const mutation of mutationsList) {
         if (mutation.type === 'childList') {
@@ -804,7 +967,6 @@ export function useCourseFeatures(props, emit) {
         }
       }
     };
-
     mutationObserver.value = new MutationObserver(callback);
     mutationObserver.value.observe(targetNode, config);
   }
@@ -821,7 +983,6 @@ export function useCourseFeatures(props, emit) {
     clearCache();
   }
 
-  // Lifecycle hooks
   onMounted(() => {
     if (!studentId.value) {
       console.error('No student ID available');
@@ -834,6 +995,7 @@ export function useCourseFeatures(props, emit) {
     loadMathJax();
     nextTick(() => {
       setupMutationObserver();
+      updateExamStatus();
     });
   });
 
@@ -885,6 +1047,8 @@ export function useCourseFeatures(props, emit) {
     currentQuestion,
     currentQuestionIndexInAll,
     studentId,
+    examStatus,
+    isExamPaused,
     attemptStartExam,
     startExam,
     startTimer,
@@ -900,7 +1064,6 @@ export function useCourseFeatures(props, emit) {
     markForReview,
     submitAnswer,
     submitExam,
-    reviewAnswers,
     logMalpractice,
     handleImageError,
     setupMalpracticePrevention,
