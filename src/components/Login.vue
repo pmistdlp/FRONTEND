@@ -99,9 +99,9 @@
               Student Login
             </button>
           </div>
-          <!-- <p v-if="error" class="mt-4 text-center text-red-500 font-medium animate-pulse text-xs sm:text-sm">
+          <p v-if="error" class="mt-4 text-center text-red-500 font-medium animate-pulse text-xs sm:text-sm">
              {{ error }}
-          </p> -->
+          </p>
         </div>
       </div>
 
@@ -238,28 +238,11 @@ export default {
     goToPMU() {
       window.location.href = 'https://pmu.edu';
     },
-    async fetchOpenCourses() {
-      try {
-        const { data } = await axios.get('/api/public-enrollment');
-        console.log('Fetched courses:', data);
-        this.openCourses = data.filter(course => course.isRegistrationOpen);
-        console.log('Filtered open courses:', this.openCourses);
-      } catch (err) {
-        console.error('Error fetching open courses:', err.response ? err.response.status : err.message);
-        this.error = 'Failed to load courses. Check server connection.';
-      }
-    },
     goToEnrollment(courseId) {
       console.log('Navigating to enrollment for courseId:', courseId);
       console.log('Current user before navigation:', JSON.parse(localStorage.getItem('user')) || 'No user');
       this.$router.push({ name: 'Enrollment', params: { courseId } });
     },
-  },
-  created() {
-    // Clear localStorage on component creation to ensure clean state
-    localStorage.removeItem('user');
-    console.log('Cleared localStorage on Login.vue creation');
-    this.fetchOpenCourses();
   },
   directives: {
     'no-right-click': {
