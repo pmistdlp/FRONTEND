@@ -46,13 +46,13 @@
             </td>
             <td class="py-2 px-3 border-b border-gray-200 flex flex-wrap gap-2">
               <button
-                @click="startExam(course)"
-                :disabled="!course.isEligible || !course.paymentConfirmed || course.hasCompleted || course.hasMalpractice || course.hasExited"
+                @click="handleStartExam(course)"
+                :disabled="!course.isEligible || !course.paymentConfirmed || course.hasCompleted || course.hasMalpractice || course.hasExited || isExamLoading"
                 class="bg-green-500 text-white px-3 py-1 rounded-md hover:bg-green-600 transition-all duration-200 flex items-center space-x-1 text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
                 :title="getStartExamTooltip(course)"
               >
                 <PlayIcon class="w-4 h-4" />
-                <span>Start Exam</span>
+                <span>{{ isExamLoading ? 'Starting...' : 'Start Exam' }}</span>
               </button>
               <button
                 @click="downloadHallTicket(course.id)"
@@ -69,13 +69,13 @@
       </table>
     </div>
 
-    <!-- Exam Not Yet Started Modal -->
+    <!-- Exam Modal -->
     <div v-if="showExamModal" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
       <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-200 max-w-md w-full text-gray-800">
         <h3 class="text-xl font-semibold text-indigo-600 mb-4 flex items-center">
           <ExclamationCircleIcon class="w-6 h-6 mr-2 text-indigo-500" /> Information
         </h3>
-        <p class="text-gray-700">Exam Not Yet Started</p>
+        <p class="text-gray-700">{{ examErrorMessage || 'Exam Not Yet Started' }}</p>
         <button
           @click="closeExamModal"
           class="mt-4 bg-indigo-500 text-white px-6 py-2 rounded-full hover:bg-indigo-600 transition-all duration-200 flex items-center mx-auto"
@@ -91,6 +91,7 @@
 import { AcademicCapIcon, PlayIcon, ExclamationCircleIcon, CheckIcon, DownloadIcon } from '@heroicons/vue/24/solid';
 import { useCourses } from '@/components/student/composables/courses';
 import { useHallTicketFeatures } from '@/components/student/composables/hallTicketFeatures';
+import { useExam } from '@/components/student/composables/Exam';
 import { ref, onMounted } from 'vue';
 import axios from 'axios';
 import apiConfig from '@/config/apiConfig';
@@ -105,6 +106,7 @@ export default {
   },
   setup(props, { emit }) {
     const { courses, student, isLoading, errorMessage, fetchCourses } = useCourses();
+    const { isExamActive, isLoading: isExamLoading, errorMessage: examErrorMessage, startExam } = useExam();
     const studentId = ref(props.user?.id || null);
     const { isDownloading, downloadHallTicketForStudent } = useHallTicketFeatures(studentId, emit);
     const isCheckingSession = ref(true);
@@ -155,15 +157,46 @@ export default {
     };
 
     // Start exam functionality
-    const startExam = (course) => {
+    const handleStartExam = async (course) => {
       console.log(`[${new Date().toISOString()}] [Courses.vue] Start Exam clicked for course:`, course.id, course.name);
-      console.log(`[${new Date().toISOString()}] [Courses.vue] Exam Not Yet Started for course: ${course.name}`);
-      showExamModal.value = true;
+      
+      if (!course.isEligible) {
+        examErrorMessage.value = 'You are not eligible to take this exam';
+        showExamModal.value = true;
+        return;
+      }
+      if (!course.paymentConfirmed) {
+        examErrorMessage.value = 'Payment not confirmed';
+        showExamModal.value = true;
+        return;
+      }
+      if (course.hasCompleted || course.hasMalpractice || course.hasExited) {
+        examErrorMessage.value = getStartExamTooltip(course);
+        showExamModal.value = true;
+        return;
+      }
+      if (isExamActive.value) {
+        examErrorMessage.value = 'An exam is already active';
+        showExamModal.value = true;
+        return;
+      }
+
+      try {
+        await startExam(course.id, studentId.value);
+        if (examErrorMessage.value) {
+          showExamModal.value = true;
+        }
+      } catch (error) {
+        console.error(`[${new Date().toISOString()}] [Courses.vue] Error starting exam:`, error.message);
+        examErrorMessage.value = 'Failed to start exam';
+        showExamModal.value = true;
+      }
     };
 
     // Close the exam modal
     const closeExamModal = () => {
       showExamModal.value = false;
+      examErrorMessage.value = '';
     };
 
     // Download hall ticket
@@ -171,7 +204,7 @@ export default {
       console.log(`[${new Date().toISOString()}] [Courses.vue] Download Hall Ticket clicked for courseId: ${courseId}, studentId: ${studentId.value}`);
       if (!studentId.value) {
         console.error(`[${new Date().toISOString()}] [Courses.vue] Student ID is missing`);
-        console.error(`[${new Date().toISOString()}] [Courses.vue] Unable to download hall ticket: Please log in again.`);
+        errorMessage.value = 'Unable to download hall ticket: Please log in again.';
         emit('logout');
         return;
       }
@@ -179,7 +212,8 @@ export default {
         await downloadHallTicketForStudent(courseId);
         console.log(`[${new Date().toISOString()}] [Courses.vue] Hall ticket downloaded successfully for courseId: ${courseId}`);
       } catch (error) {
-        console.error(`[${new Date().toISOString()}] [Courses.vue] Failed to download hall ticket: ${error.message}`);
+        console.error(`[${new Date().toISOString()}] [Courses.vue] Failed to download hall ticket:`, error.message);
+        errorMessage.value = 'Failed to download hall ticket';
       }
     };
 
@@ -190,6 +224,7 @@ export default {
       if (course.hasCompleted) return 'Exam already completed';
       if (course.hasMalpractice) return 'Exam auto-evaluated due to malpractice';
       if (course.hasExited) return 'Exam already exited';
+      if (isExamLoading.value) return 'Exam is starting';
       return 'Start the exam';
     };
 
@@ -213,7 +248,9 @@ export default {
       isCheckingSession,
       isDownloading,
       showExamModal,
-      startExam,
+      examErrorMessage,
+      isExamLoading,
+      handleStartExam,
       closeExamModal,
       downloadHallTicket,
       getStartExamTooltip,
