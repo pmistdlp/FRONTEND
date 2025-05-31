@@ -1,4 +1,3 @@
-```vue
 <template>
   <div class="flex h-screen bg-white text-gray-800 font-sans antialiased">
     <div v-if="!isExamActive" class="w-64 bg-white shadow-md flex flex-col border-r border-gray-200">
@@ -58,9 +57,9 @@
         v-model:courses="courses"
         :is-exam-active="isExamActive"
         :user="updatedUser"
-        @show-message="showModal"
         @exam-status-changed="updateExamStatus"
         @toggle-dashboard="toggleDashboard"
+        @logout="handleLogout"
       />
       <Profile
         v-else-if="activeSection === 'profile' && !isExamActive"
@@ -68,31 +67,6 @@
         @logout="handleLogout"
         @profile-updated="handleProfileUpdate"
       />
-    </div>
-
-    <div v-if="showMessageModal" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
-      <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-200 max-w-md w-full text-gray-800">
-        <h3 class="text-xl font-semibold text-red-600 mb-4 flex items-center">
-          <ExclamationCircleIcon class="w-6 h-6 mr-2 text-red-500" /> Information
-        </h3>
-        <p class="text-gray-700">{{ modalMessage }}</p>
-        <div v-if="examLink" class="mt-4">
-          <a
-            :href="examLink"
-            class="bg-green-500 text-white px-6 py-2 rounded-full hover:bg-green-600 transition-all duration-200 flex items-center mx-auto"
-            @click.prevent="navigateToExam"
-          >
-            <PlayIcon class="w-5 h-5 mr-2" /> Go to Exam Page
-          </a>
-        </div>
-        <button
-          @click="closeModal"
-          :disabled="isExamActive"
-          class="mt-4 bg-indigo-500 text-white px-6 py-2 rounded-full hover:bg-indigo-600 transition-all duration-200 flex items-center mx-auto disabled:bg-indigo-300 disabled:cursor-not-allowed"
-        >
-          <CheckIcon class="w-5 h-5 mr-2" /> Okay
-        </button>
-      </div>
     </div>
 
     <div v-if="showLogoutModalFlag" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -125,7 +99,7 @@ import axios from 'axios';
 import apiConfig from '@/config/apiConfig';
 import Courses from './Courses.vue';
 import Profile from './Profile.vue';
-import { AcademicCapIcon, ArrowLeftOnRectangleIcon, ExclamationCircleIcon, CheckIcon, PlayIcon, ExclamationTriangleIcon, UserIcon } from '@heroicons/vue/24/solid';
+import { AcademicCapIcon, ArrowLeftOnRectangleIcon, ExclamationTriangleIcon, UserIcon } from '@heroicons/vue/24/solid';
 
 export default {
   components: { 
@@ -133,9 +107,6 @@ export default {
     Profile,
     AcademicCapIcon, 
     ArrowLeftOnRectangleIcon, 
-    ExclamationCircleIcon, 
-    CheckIcon, 
-    PlayIcon, 
     ExclamationTriangleIcon,
     UserIcon 
   },
@@ -151,9 +122,6 @@ export default {
       courses: [],
       isLoading: false,
       errorMessage: '',
-      showMessageModal: false,
-      modalMessage: '',
-      examLink: null,
       isExamActive: false,
       showLogoutModalFlag: false,
       profilePhoto: null,
@@ -204,12 +172,13 @@ export default {
     async validateSession() {
       try {
         const baseURL = await apiConfig.getBaseURL();
+        console.log(`[${new Date().toISOString()}] Validating session at: ${baseURL}/api/check-session`);
         const response = await axios.get(`${baseURL}/api/check-session`, { withCredentials: true });
         console.log('Session validation response:', response.data);
-        return response.data.isAuthenticated && response.data.user.role === 'student';
+        return response.data.isAuthenticated && response.data.user.role === 'student' ? response.data.user : null;
       } catch (error) {
         console.error('Session validation failed:', error.response ? error.response.data : error.message);
-        return false;
+        return null;
       }
     },
     handleProfileUpdate(updatedProfile) {
@@ -225,22 +194,6 @@ export default {
     handleImageError() {
       console.error('Failed to load profile photo in sidebar');
       this.profilePhoto = null;
-    },
-    showModal(message, examLink = null) {
-      this.modalMessage = message;
-      this.examLink = examLink;
-      this.showMessageModal = true;
-    },
-    closeModal() {
-      if (this.isExamActive) return;
-      this.showMessageModal = false;
-      this.examLink = null;
-    },
-    navigateToExam() {
-      if (this.examLink) {
-        console.log('Performing direct navigation to:', this.examLink);
-        window.location.href = this.examLink;
-      }
     },
     updateExamStatus(isActive) {
       this.isExamActive = isActive;
@@ -272,13 +225,7 @@ export default {
         this.$router.push('/');
       } catch (error) {
         console.error('Error during logout:', error.response?.data || error.message);
-        let errorMessage = 'Failed to logout. Please try again.';
-        if (error.response?.status === 404) {
-          errorMessage = 'Logout endpoint not found. Please contact support.';
-        } else if (error.response?.data?.error) {
-          errorMessage = `Failed to logout: ${error.response.data.error}`;
-        }
-        this.showModal(errorMessage);
+        console.error(`[${new Date().toISOString()}] Failed to logout: ${error.response?.data?.error || error.message}`);
       }
     },
   },
@@ -293,10 +240,10 @@ export default {
     this.isLoading = true;
     try {
       const baseURL = await apiConfig.getBaseURL();
-      this.baseUrl = baseURL; // Store baseURL for photo URL construction
-      const isSessionValid = await this.validateSession();
-      if (!isSessionValid) {
-        console.error('Session is invalid or user is not a student');
+      this.baseUrl = baseURL;
+      const sessionUser = await this.validateSession();
+      if (!sessionUser || sessionUser.id !== this.user.id) {
+        console.error('Session is invalid or user ID mismatch. Session user:', sessionUser, 'Prop user:', this.user);
         this.errorMessage = 'Session expired or invalid. Please log in again.';
         await this.handleLogout();
         return;

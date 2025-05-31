@@ -1,36 +1,41 @@
 <template>
-  <div class="space-y-6 p-4 bg-blue-50 text-indigo-600 relative h-screen" ref="container">
-    <!-- Course List View -->
-    <div>
-      <h2 class="text-2xl font-bold transition-all duration-300 hover:text-indigo-600 pb-4">My Courses</h2>
-      <div v-if="isLoading || isCheckingSession" class="bg-white p-6 rounded-lg shadow-md border border-gray-200 text-center">
-        <div class="inline-block animate-spin rounded-full h-8 w-8 border-t-4 border-indigo-500 border-solid"></div>
-        <p class="text-gray-600 text-sm mt-2">Loading courses...</p>
-      </div>
+  <div class="space-y-6 p-4 bg-white text-gray-800">
+    <!-- Loading Overlay -->
+    <div v-if="isLoading || isCheckingSession" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
+      <div class="animate-spin rounded-full h-12 w-12 border-t-4 border-indigo-500 border-solid"></div>
+      <p class="text-white ml-4">Loading...</p>
+    </div>
+
+    <h2 class="text-2xl font-bold transition-all duration-300 hover:text-indigo-600">My Courses</h2>
+
+    <!-- Course List -->
+    <div class="bg-gray-50 p-4 rounded-lg shadow-sm border border-gray-200 max-h-[400px] overflow-y-auto scrollbar-hidden">
+      <h3 class="text-base font-semibold text-indigo-500 mb-4">Course List</h3>
+      <div v-if="isLoading || isCheckingSession" class="text-center text-gray-500">Loading courses...</div>
       <div v-else-if="errorMessage" class="bg-red-50 p-6 rounded-lg shadow-md border border-red-200 text-center">
         <p class="text-red-600 text-sm">{{ errorMessage }}</p>
       </div>
-      <div v-else-if="!courses.length" class="bg-white p-6 rounded-lg shadow-md border border-gray-200 text-center">
-        <p class="text-gray-600 text-sm">No courses assigned. Please contact the administrator.</p>
-      </div>
-      <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <div
-          v-for="course in courses"
-          :key="course.id"
-          class="bg-white rounded-lg shadow-md border border-gray-200 p-6 hover:shadow-lg transition-all duration-200"
-        >
-          <div class="flex items-center mb-4">
-            <AcademicCapIcon class="w-8 h-8 text-indigo-500 mr-3" />
-            <h3 class="text-lg font-semibold text-indigo-600">{{ course.name }}</h3>
-          </div>
-          <div class="space-y-2 text-sm text-gray-700">
-            <p><span class="font-medium">Course Code:</span> {{ course.courseCode }}</p>
-            <p><span class="font-medium">Platform:</span> {{ course.learningPlatform }}</p>
-            <p><span class="font-medium">Exam Date:</span> {{ course.examDate }}</p>
-            <p><span class="font-medium">Exam Time:</span> {{ course.examTime }} IST</p>
-            <p><span class="font-medium">Eligible:</span> {{ course.isEligible ? 'Yes' : 'No' }}</p>
-            <p><span class="font-medium">Payment:</span> {{ course.paymentConfirmed ? 'Confirmed' : 'Pending' }}</p>
-            <p><span class="font-medium">Status:</span>
+      <div v-else-if="!courses.length" class="text-center text-gray-500">No courses assigned. Please contact the administrator.</div>
+      <table v-else class="min-w-full bg-white border border-gray-200 rounded-md text-sm">
+        <thead class="sticky top-0 bg-gray-100">
+          <tr>
+            <th class="py-2 px-3 text-left text-gray-600 font-semibold border-b border-gray-200">Course Name</th>
+            <th class="py-2 px-3 text-left text-gray-600 font-semibold border-b border-gray-200">Course Code</th>
+            <th class="py-2 px-3 text-left text-gray-600 font-semibold border-b border-gray-200">Platform</th>
+            <th class="py-2 px-3 text-left text-gray-600 font-semibold border-b border-gray-200">Exam Date</th>
+            <th class="py-2 px-3 text-left text-gray-600 font-semibold border-b border-gray-200">Exam Time</th>
+            <th class="py-2 px-3 text-left text-gray-600 font-semibold border-b border-gray-200">Status</th>
+            <th class="py-2 px-3 text-left text-gray-600 font-semibold border-b border-gray-200">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="course in courses" :key="course.id" class="hover:bg-gray-50 transition-all duration-200">
+            <td class="py-2 px-3 border-b border-gray-200">{{ course.name }}</td>
+            <td class="py-2 px-3 border-b border-gray-200">{{ course.courseCode || 'N/A' }}</td>
+            <td class="py-2 px-3 border-b border-gray-200">{{ course.learningPlatform || 'N/A' }}</td>
+            <td class="py-2 px-3 border-b border-gray-200">{{ course.examDate || 'N/A' }}</td>
+            <td class="py-2 px-3 border-b border-gray-200">{{ course.examTime ? `${course.examTime} IST` : 'N/A' }}</td>
+            <td class="py-2 px-3 border-b border-gray-200">
               <span
                 :class="{
                   'text-red-600': course.hasCompleted || course.hasMalpractice || course.hasExited,
@@ -38,35 +43,52 @@
               >
                 {{ course.hasMalpractice ? 'Auto Evaluated' : course.hasExited ? 'Exited' : course.hasCompleted ? 'Completed' : 'Not Started' }}
               </span>
-            </p>
-          </div>
-          <div class="mt-4 flex flex-col space-y-2">
-            <button
-              @click="startExam(course)"
-              :disabled="!course.isEligible || !course.paymentConfirmed || course.hasCompleted || course.hasMalpractice || course.hasExited"
-              class="bg-green-500 text-white px-4 py-2 rounded-md hover:bg-green-600 transition-all duration-200 flex items-center justify-center space-x-1 text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
-              :title="getStartExamTooltip(course)"
-            >
-              <PlayIcon class="w-4 h-4" />
-              <span>Start Exam</span>
-            </button>
-            <button
-              @click="downloadHallTicket(course.id)"
-              :disabled="!course.isEligible || !course.paymentConfirmed || isDownloading"
-              class="bg-indigo-500 text-white px-4 py-2 rounded-md hover:bg-indigo-600 transition-all duration-200 text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
-              :title="getHallTicketTooltip(course)"
-            >
-              {{ isDownloading ? 'Downloading...' : 'Download Hall Ticket' }}
-            </button>
-          </div>
-        </div>
+            </td>
+            <td class="py-2 px-3 border-b border-gray-200 flex flex-wrap gap-2">
+              <button
+                @click="startExam(course)"
+                :disabled="!course.isEligible || !course.paymentConfirmed || course.hasCompleted || course.hasMalpractice || course.hasExited"
+                class="bg-green-500 text-white px-3 py-1 rounded-md hover:bg-green-600 transition-all duration-200 flex items-center space-x-1 text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
+                :title="getStartExamTooltip(course)"
+              >
+                <PlayIcon class="w-4 h-4" />
+                <span>Start Exam</span>
+              </button>
+              <button
+                @click="downloadHallTicket(course.id)"
+                :disabled="!course.isEligible || !course.paymentConfirmed || isDownloading"
+                class="bg-indigo-500 text-white px-3 py-1 rounded-md hover:bg-indigo-600 transition-all duration-200 flex items-center space-x-1 text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
+                :title="getHallTicketTooltip(course)"
+              >
+                <DownloadIcon class="w-4 h-4" />
+                <span>{{ isDownloading ? 'Downloading...' : 'Download Hall Ticket' }}</span>
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Exam Not Yet Started Modal -->
+    <div v-if="showExamModal" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
+      <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-200 max-w-md w-full text-gray-800">
+        <h3 class="text-xl font-semibold text-indigo-600 mb-4 flex items-center">
+          <ExclamationCircleIcon class="w-6 h-6 mr-2 text-indigo-500" /> Information
+        </h3>
+        <p class="text-gray-700">Exam Not Yet Started</p>
+        <button
+          @click="closeExamModal"
+          class="mt-4 bg-indigo-500 text-white px-6 py-2 rounded-full hover:bg-indigo-600 transition-all duration-200 flex items-center mx-auto"
+        >
+          <CheckIcon class="w-5 h-5 mr-2" /> Okay
+        </button>
       </div>
     </div>
   </div>
 </template>
 
 <script>
-import { AcademicCapIcon, PlayIcon } from '@heroicons/vue/24/solid';
+import { AcademicCapIcon, PlayIcon, ExclamationCircleIcon, CheckIcon, DownloadIcon } from '@heroicons/vue/24/solid';
 import { useCourses } from '@/components/student/composables/courses';
 import { useHallTicketFeatures } from '@/components/student/composables/hallTicketFeatures';
 import { ref, onMounted } from 'vue';
@@ -74,7 +96,7 @@ import axios from 'axios';
 import apiConfig from '@/config/apiConfig';
 
 export default {
-  components: { AcademicCapIcon, PlayIcon },
+  components: { AcademicCapIcon, PlayIcon, ExclamationCircleIcon, CheckIcon, DownloadIcon },
   props: {
     user: {
       type: Object,
@@ -86,6 +108,7 @@ export default {
     const studentId = ref(props.user?.id || null);
     const { isDownloading, downloadHallTicketForStudent } = useHallTicketFeatures(studentId, emit);
     const isCheckingSession = ref(true);
+    const showExamModal = ref(false);
 
     // Function to check session and get user data
     const checkSession = async () => {
@@ -131,13 +154,16 @@ export default {
       isCheckingSession.value = false;
     };
 
-    // Placeholder for start exam functionality
+    // Start exam functionality
     const startExam = (course) => {
       console.log(`[${new Date().toISOString()}] [Courses.vue] Start Exam clicked for course:`, course.id, course.name);
-      emit('show-message', {
-        message: 'Start Exam functionality will be implemented soon.',
-        type: 'info',
-      });
+      console.log(`[${new Date().toISOString()}] [Courses.vue] Exam Not Yet Started for course: ${course.name}`);
+      showExamModal.value = true;
+    };
+
+    // Close the exam modal
+    const closeExamModal = () => {
+      showExamModal.value = false;
     };
 
     // Download hall ticket
@@ -145,14 +171,16 @@ export default {
       console.log(`[${new Date().toISOString()}] [Courses.vue] Download Hall Ticket clicked for courseId: ${courseId}, studentId: ${studentId.value}`);
       if (!studentId.value) {
         console.error(`[${new Date().toISOString()}] [Courses.vue] Student ID is missing`);
-        emit('show-message', {
-          message: 'Unable to download hall ticket: Please log in again.',
-          type: 'error',
-        });
+        console.error(`[${new Date().toISOString()}] [Courses.vue] Unable to download hall ticket: Please log in again.`);
         emit('logout');
         return;
       }
-      await downloadHallTicketForStudent(courseId);
+      try {
+        await downloadHallTicketForStudent(courseId);
+        console.log(`[${new Date().toISOString()}] [Courses.vue] Hall ticket downloaded successfully for courseId: ${courseId}`);
+      } catch (error) {
+        console.error(`[${new Date().toISOString()}] [Courses.vue] Failed to download hall ticket: ${error.message}`);
+      }
     };
 
     // Tooltips for buttons
@@ -184,7 +212,9 @@ export default {
       errorMessage,
       isCheckingSession,
       isDownloading,
+      showExamModal,
       startExam,
+      closeExamModal,
       downloadHallTicket,
       getStartExamTooltip,
       getHallTicketTooltip,
@@ -228,6 +258,18 @@ export default {
 }
 
 .transition-all { transition: all 0.2s ease; }
+
+.scrollbar-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
+button:hover {
+  transform: translateY(-1px);
+}
 
 @media (max-width: 1024px) {
   .lg\:flex-row { flex-direction: column; }
