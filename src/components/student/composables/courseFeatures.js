@@ -59,14 +59,13 @@ export function useCourseFeatures(props, emit) {
   const malpracticeAttempts = ref({ right_click: 0, screenshot_key: 0, other: 0 });
   const hasMalpractice = ref(false);
   const isRestricted = ref(false);
+  const isHallTicketRestricted = ref(false);
   const baseUrl = ref('');
-  const studentPhoto = ref(null);
   const examResults = ref(null);
   const showResultsView = ref(false);
   const examStatus = ref({});
   const pendingSubmissions = ref([]);
   const submittedAnswers = ref([]);
-
   const isExamPaused = ref(false);
 
   const { isDownloading, downloadHallTicketForStudent } = useHallTicketFeatures(computed(() => props.user?.id), emit);
@@ -96,6 +95,85 @@ export function useCourseFeatures(props, emit) {
 
   const studentId = computed(() => props.user?.id);
 
+  // Fetch courses for the student
+  async function fetchCourses() {
+    if (!studentId.value) {
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] No student ID available to fetch courses`);
+      emit('show-message', 'Please log in to access your courses.');
+      return;
+    }
+    try {
+      const baseURL = await apiConfig.getBaseURL();
+      const url = `/api/student-courses/complete-details/${studentId.value}`;
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Fetching courses from: ${baseURL}${url} for student ID ${studentId.value}`);
+      const response = await retryOperation(() => api.get(url));
+      const { courses: fetchedCourses } = response.data;
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Fetched ${fetchedCourses.length} courses for student ID ${studentId.value}`, fetchedCourses);
+
+      // Validate and map courses
+      const mappedCourses = fetchedCourses
+        .filter(course => {
+          if (!course.courseid || !course.coursename) {
+            console.warn(`[${new Date().toISOString()}] [courseFeatures.js] Invalid course data:`, course);
+            return false;
+          }
+          return true;
+        })
+        .map(course => {
+          const mappedCourse = {
+            id: course.courseid,
+            name: course.coursename.trim(), // Trim trailing spaces
+            courseCode: course.coursecode || 'N/A',
+            learningPlatform: course.learningplatform || 'N/A',
+            examDate: course.examdate || 'N/A',
+            examTime: course.examtime || 'N/A',
+            examQuestionCount: course.examquestioncount || 0,
+            examMarks: course.exammarks || 0,
+            coCount: course.cocount || 0,
+            isRegistrationOpen: course.isregistrationopen ?? false,
+            isEligible: course.iseligible ?? false,
+            paymentConfirmed: course.paymentconfirmed ?? false,
+            startDate: course.startdate || 'N/A',
+            startTime: course.starttime || 'N/A',
+            hasCompleted: course.hascompleted ?? false,
+            hasMalpractice: course.hasmalpractice ?? false,
+            hasExited: course.hasexited ?? false,
+            isDraft: course.isdraft ?? false,
+            duration: course.examduration || 120, // Assume default duration if not provided
+            student: {
+              id: studentId.value,
+              registerNo: props.user?.registerNo || `STU${studentId.value}`,
+              name: props.user?.name || 'Student'
+            }
+          };
+          console.log(`[${new Date().toISOString()}] [courseFeatures.js] Mapped course ${mappedCourse.id}:`, mappedCourse);
+          return mappedCourse;
+        });
+
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Emitting ${mappedCourses.length} courses`);
+      emit('update:courses', mappedCourses);
+
+      // Update exam status
+      updateExamStatus();
+
+      if (mappedCourses.length === 0) {
+        console.warn(`[${new Date().toISOString()}] [courseFeatures.js] No valid courses returned for student ID ${studentId.value}. Checking database...`);
+        const studentCoursesCheck = await api.get(`/api/student-courses/complete-details/${studentId.value}?showDrafts=true`);
+        console.log(`[${new Date().toISOString()}] [courseFeatures.js] Debug: Found ${studentCoursesCheck.data.courses.length} course assignments (including drafts):`, studentCoursesCheck.data.courses);
+        emit('show-message', 'No courses assigned to you. Please contact the administrator or check your enrollment status.');
+      }
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Error fetching courses for student ID ${studentId.value}:`, error.response?.data || error.message);
+      let errorMessage = 'Failed to fetch courses. Please try again later.';
+      if (error.response?.status === 404) {
+        errorMessage = 'Student not found or no courses assigned. Please verify your enrollment.';
+      } else if (error.response?.data?.error) {
+        errorMessage = `Failed to fetch courses: ${error.response.data.error}`;
+      }
+      emit('show-message', errorMessage);
+    }
+  }
+
   function saveAnswersToCache() {
     if (!selectedCourse.value || !studentId.value) return;
     const cacheKey = `exam_${studentId.value}_${selectedCourse.value.id}`;
@@ -108,9 +186,9 @@ export function useCourseFeatures(props, emit) {
     };
     try {
       localStorage.setItem(cacheKey, JSON.stringify(cacheData));
-      console.log('Answers saved to cache:', cacheData);
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Answers saved to cache:`, cacheData);
     } catch (error) {
-      console.error('Error saving to cache:', error);
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Error saving to cache:`, error);
     }
   }
 
@@ -131,10 +209,10 @@ export function useCourseFeatures(props, emit) {
         examStartedAt.value = cachedStart;
         pendingSubmissions.value = cachedPending || [];
         submittedAnswers.value = cachedSubmitted || [];
-        console.log('Answers restored from cache:', { selectedAnswers: selectedAnswers.value, questionStatuses: questionStatuses.value });
+        console.log(`[${new Date().toISOString()}] [courseFeatures.js] Answers restored from cache:`, { selectedAnswers: selectedAnswers.value, questionStatuses: questionStatuses.value });
         retryPendingSubmissions();
       } catch (error) {
-        console.error('Error restoring cache:', error);
+        console.error(`[${new Date().toISOString()}] [courseFeatures.js] Error restoring cache:`, error);
         clearCache();
       }
     }
@@ -144,7 +222,7 @@ export function useCourseFeatures(props, emit) {
     if (!selectedCourse.value || !studentId.value) return;
     const cacheKey = `exam_${studentId.value}_${selectedCourse.value.id}`;
     localStorage.removeItem(cacheKey);
-    console.log('Cache cleared for:', cacheKey);
+    console.log(`[${new Date().toISOString()}] [courseFeatures.js] Cache cleared for:`, cacheKey);
     pendingSubmissions.value = [];
     submittedAnswers.value = [];
   }
@@ -156,21 +234,19 @@ export function useCourseFeatures(props, emit) {
     for (const submission of submissions) {
       try {
         if (submission.answers) {
-          // Exam submission
           if (!submission.studentId || !submission.courseId || !submission.answers) {
-            console.error('Invalid pending exam submission:', submission);
+            console.error(`[${new Date().toISOString()}] [courseFeatures.js] Invalid pending exam submission:`, submission);
             continue;
           }
           await retryOperation(() => api.post('/api/student-courses/submit-exam', submission));
-          console.log(`Pending exam submitted`);
+          console.log(`[${new Date().toISOString()}] [courseFeatures.js] Pending exam submitted for studentId ${submission.studentId}, courseId ${submission.courseId}`);
         } else {
-          // Individual answer submission
           if (!submission.studentId || !submission.courseId || !submission.questionId || !submission.selectedAnswer) {
-            console.error('Invalid pending answer submission:', submission);
+            console.error(`[${new Date().toISOString()}] [courseFeatures.js] Invalid pending answer submission:`, submission);
             continue;
           }
           await retryOperation(() => api.post('/api/student-courses/submit-answer', submission));
-          console.log(`Pending answer submitted for question ${submission.questionId}`);
+          console.log(`[${new Date().toISOString()}] [courseFeatures.js] Pending answer submitted for question ${submission.questionId}`);
           submittedAnswers.value.push({
             questionId: submission.questionId,
             answer: submission.selectedAnswer,
@@ -178,7 +254,7 @@ export function useCourseFeatures(props, emit) {
           });
         }
       } catch (error) {
-        console.error(`Failed to retry submission:`, error.response?.data || error.message);
+        console.error(`[${new Date().toISOString()}] [courseFeatures.js] Failed to retry submission:`, error.response?.data || error.message);
         pendingSubmissions.value.push(submission);
       }
     }
@@ -214,8 +290,8 @@ export function useCourseFeatures(props, emit) {
     (newVal) => {
       emit('exam-status-changed', newVal);
       emit('toggle-dashboard', newVal);
-      console.log('Exam status updated:', newVal);
-      console.log('Dashboard visibility toggled, isExamActive:', newVal);
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Exam status updated:`, newVal);
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Dashboard visibility toggled, isExamActive:`, newVal);
       if (newVal) {
         document.body.style.overflow = 'hidden';
       } else {
@@ -227,7 +303,7 @@ export function useCourseFeatures(props, emit) {
   watch(
     () => props.courses,
     (newVal) => {
-      console.log('Courses prop updated:', newVal);
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Courses prop updated:`, newVal);
       updateExamStatus();
     },
     { deep: true }
@@ -258,41 +334,18 @@ export function useCourseFeatures(props, emit) {
       const baseURL = await apiConfig.getBaseURL();
       api.defaults.baseURL = baseURL;
       baseUrl.value = baseURL;
-      console.log('[Frontend] Base URL set to:', baseURL);
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Base URL set to:`, baseURL);
     } catch (error) {
-      console.error('[Frontend] Failed to fetch base URL:', error);
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Failed to fetch base URL:`, error);
       api.defaults.baseURL = process.env.VUE_APP_API_BASE_URL || 'http://localhost:3000';
       baseUrl.value = api.defaults.baseURL;
-      console.log('[Frontend] Using fallback base URL:', api.defaults.baseURL);
-    }
-  }
-
-  async function fetchStudentPhoto() {
-    if (!props.user?.registerNo) {
-      console.log('No register number available for photo fetch');
-      studentPhoto.value = null;
-      return;
-    }
-    try {
-      const url = `/api/student-profile/profile/${props.user.registerNo}`;
-      console.log('Fetching student profile from:', `${baseUrl.value}${url}`);
-      const response = await api.get(url);
-      const data = response.data;
-      if (data.photo) {
-        studentPhoto.value = `${baseUrl.value}${data.photo}`;
-        console.log('Student photo URL set:', studentPhoto.value);
-      } else {
-        console.log('No photo found in profile');
-        studentPhoto.value = null;
-      }
-    } catch (error) {
-      console.error('Error fetching student photo:', error);
-      emit('show-message', 'Failed to load student photo.');
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Using fallback base URL:`, api.defaults.baseURL);
     }
   }
 
   function isEligible(course) {
     if (!course?.isEligible) {
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Course ${course?.id} is not eligible for student ${studentId.value}`);
       emit('show-message', 'You are not eligible to take this exam.');
       return false;
     }
@@ -301,6 +354,7 @@ export function useCourseFeatures(props, emit) {
 
   function isPaymentConfirmed(course) {
     if (!course?.paymentConfirmed) {
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Payment not confirmed for course ${course?.id} for student ${studentId.value}`);
       emit('show-message', 'Payment not confirmed for this exam.');
       return false;
     }
@@ -308,7 +362,10 @@ export function useCourseFeatures(props, emit) {
   }
 
   async function isWithinTimeWindow(course) {
-    if (!course?.examDate || !course?.examTime) return false;
+    if (!course?.examDate || !course?.examTime || course.examDate === 'N/A' || course.examTime === 'N/A') {
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Course ${course?.id} has no valid examDate or examTime, allowing exam start for debugging`);
+      return true;
+    }
     const now = await fetchISTTime();
     const examDateTime = moment.tz(
       `${course.examDate} ${course.examTime}`,
@@ -323,53 +380,76 @@ export function useCourseFeatures(props, emit) {
     const isBeforeStart = now.isBefore(windowStart);
     const isAfterEnd = now.isAfter(windowEnd);
 
+    console.log(`[${new Date().toISOString()}] [courseFeatures.js] Checking time window for course ${course.id}:`, {
+      now: now.format(),
+      examDateTime: examDateTime.format(),
+      windowStart: windowStart.format(),
+      windowEnd: windowEnd.format(),
+      isSameDate,
+      isWithinTime,
+      isBeforeStart,
+      isAfterEnd
+    });
+
     if (!isSameDate || isBeforeStart) {
       examStatus.value[course.id] = 'Exam Not Yet Started';
+      isRestricted.value = true;
       return false;
     } else if (isAfterEnd) {
       examStatus.value[course.id] = 'Exam Elapsed';
+      isRestricted.value = true;
       return false;
     } else if (isWithinTime) {
+      isRestricted.value = false;
       return true;
     }
+    isRestricted.value = true;
     return false;
   }
 
   async function fetchISTTime() {
     try {
       const response = await axios.get('https://api.api-ninjas.com/v1/worldtime?city=delhi', {
-        headers: { 'X-Api-Key': 'YOUR_API_NINJAS_KEY' } // Replace with your API key
+        headers: { 'X-Api-Key': process.env.VUE_APP_API_NINJAS_KEY || 'YOUR_API_NINJAS_KEY' }
       });
       return moment.tz(response.data.datetime, 'Asia/Kolkata');
     } catch (error) {
-      console.error('Failed to fetch IST time:', error.message);
-      console.warn('Using local machine IST time as fallback');
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Failed to fetch IST time:`, error.message);
+      console.warn(`[${new Date().toISOString()}] [courseFeatures.js] Using local machine IST time as fallback`);
       return moment.tz('Asia/Kolkata');
     }
   }
 
   function updateExamStatus() {
     props.courses.forEach(async (course) => {
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] [updateExamStatus] Checking status for course ${course.id} (${course.name})`);
       if (course.hasCompleted && !course.hasMalpractice) {
         examStatus.value[course.id] = 'Exam completed successfully';
+        console.log(`[${new Date().toISOString()}] [courseFeatures.js] Course ${course.id} status: Exam completed successfully`);
       } else if (course.hasMalpractice) {
         examStatus.value[course.id] = 'Your Exam Auto Evaluated';
+        console.log(`[${new Date().toISOString()}] [courseFeatures.js] Course ${course.id} status: Your Exam Auto Evaluated`);
       } else if (course.hasExited) {
         examStatus.value[course.id] = 'You Have Exited from Exam';
+        console.log(`[${new Date().toISOString()}] [courseFeatures.js] Course ${course.id} status: You Have Exited from Exam`);
       } else {
         await isWithinTimeWindow(course);
+        console.log(`[${new Date().toISOString()}] [courseFeatures.js] Course ${course.id} status: ${examStatus.value[course.id] || 'Pending time window check'}`);
       }
     });
   }
 
   async function attemptStartExam(course) {
     if (!course) return;
+    console.log(`[${new Date().toISOString()}] [courseFeatures.js] Attempting to start exam for course ${course.id} (${course.name})`);
     if (course.hasCompleted || course.hasMalpractice || course.hasExited) {
       emit('show-message', examStatus.value[course.id] || 'Exam not available.');
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Cannot start exam for course ${course.id}: Already completed, malpractice, or exited`);
       return;
     }
     if (!isEligible(course) || !isPaymentConfirmed(course) || !(await isWithinTimeWindow(course))) {
       emit('show-message', examStatus.value[course.id] || 'Exam not available.');
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Cannot start exam for course ${course.id}: Not eligible, payment not confirmed, or outside time window`);
       return;
     }
     isExamStarted.value = true;
@@ -390,9 +470,9 @@ export function useCourseFeatures(props, emit) {
       } else if (element.msRequestFullscreen) {
         await element.msRequestFullscreen();
       }
-      console.log('Entered full-screen mode');
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Entered full-screen mode`);
     } catch (error) {
-      console.error('Failed to enter full-screen mode:', error);
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Failed to enter full-screen mode:`, error);
       emit('show-message', 'Failed to enter full-screen mode. Please try again.');
     }
   }
@@ -409,16 +489,16 @@ export function useCourseFeatures(props, emit) {
         } else if (document.msExitFullscreen) {
           await document.msExitFullscreen();
         }
-        console.log('Exited full-screen mode');
+        console.log(`[${new Date().toISOString()}] [courseFeatures.js] Exited full-screen mode`);
       }
     } catch (error) {
-      console.error('Failed to exit full-screen mode:', error);
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Failed to exit full-screen mode:`, error);
     }
   }
 
   async function startExam(course) {
     selectedCourse.value = course;
-    console.log('Starting exam for course:', course);
+    console.log(`[${new Date().toISOString()}] [courseFeatures.js] Starting exam for course:`, course);
     isQuestionsLoading.value = true;
     questionsLoaded.value = false;
     questionsError.value = '';
@@ -439,18 +519,18 @@ export function useCourseFeatures(props, emit) {
     submittedAnswers.value = [];
     isExamPaused.value = false;
 
-    await fetchStudentPhoto();
     startTimer();
 
     try {
       const baseURL = await apiConfig.getBaseURL();
-      const url = `${baseURL}/api/student-courses/questions/${course.id}`;
+      const url = `/api/student-courses/questions/${course.id}`;
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Fetching questions from: ${baseURL}${url}`);
       const response = await retryOperation(() => api.get(url));
       questions.value = {
         phase1: response.data.phase1 || [],
         phase2: response.data.phase2 || [],
       };
-      console.log('Loaded questions:', questions.value);
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Loaded questions:`, questions.value);
 
       [...questions.value.phase1, ...questions.value.phase2].forEach(question => {
         if (question?.id) {
@@ -472,8 +552,9 @@ export function useCourseFeatures(props, emit) {
 
       await nextTick(() => debouncedTypesetMathJax());
     } catch (error) {
-      console.error('Error fetching questions:', error.response?.data || error.message);
-      questionsError.value = `Failed to fetch questions: ${error.response?.data?.message || error.message}`;
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Error fetching questions:`, error.response?.data || error.message);
+      questionsError.value = `Failed to fetch questions: ${error.response?.data?.error || error.message}`;
+      emit('show-message', questionsError.value);
     } finally {
       isQuestionsLoading.value = false;
       questionsLoaded.value = true;
@@ -518,7 +599,6 @@ export function useCourseFeatures(props, emit) {
     showMalpracticeWarning.value = false;
     hasMalpractice.value = false;
     isRestricted.value = false;
-    studentPhoto.value = null;
     examResults.value = null;
     showResultsView.value = false;
     isExamPaused.value = false;
@@ -599,14 +679,14 @@ export function useCourseFeatures(props, emit) {
   function selectOption(questionId, option) {
     if (questionStatuses.value[questionId] === 'submitted' || isExamPaused.value) return;
     selectedAnswers.value[questionId] = option;
-    console.log('Selected answers:', selectedAnswers.value);
+    console.log(`[${new Date().toISOString()}] [courseFeatures.js] Selected answers:`, selectedAnswers.value);
     saveAnswersToCache();
   }
 
   function markForReview(questionId) {
     if (questionStatuses.value[questionId] === 'submitted' || isExamPaused.value) return;
     questionStatuses.value[questionId] = 'review';
-    console.log('Question statuses:', questionStatuses.value);
+    console.log(`[${new Date().toISOString()}] [courseFeatures.js] Question statuses:`, questionStatuses.value);
     saveAnswersToCache();
     navigateNext();
   }
@@ -624,15 +704,15 @@ export function useCourseFeatures(props, emit) {
       selectedAnswer: selectedAnswers.value[questionId],
     };
     if (!submission.studentId || !submission.courseId || !submission.questionId || !submission.selectedAnswer) {
-      console.error('Invalid submission data:', submission);
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Invalid submission data:`, submission);
       emit('show-message', 'Invalid submission data. Please try again.');
       return;
     }
     questionStatuses.value[questionId] = 'submitted';
     try {
-      console.log('Submitting answer to:', `/api/student-courses/submit-answer`, submission);
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Submitting answer to: /api/student-courses/submit-answer`, submission);
       await retryOperation(() => api.post('/api/student-courses/submit-answer', submission));
-      console.log(`Answer submitted for question ${questionId}`);
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Answer submitted for question ${questionId}`);
       submittedAnswers.value.push({
         questionId,
         answer: selectedAnswers.value[questionId],
@@ -642,13 +722,13 @@ export function useCourseFeatures(props, emit) {
       emit('show-message', 'Answer submitted successfully.');
       navigateNext();
     } catch (error) {
-      console.error('Submission error for question', questionId, ':', error.response?.status, error.response?.data || error.message);
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Submission error for question ${questionId}:`, error.response?.status, error.response?.data || error.message);
       let errorMessage = 'Failed to submit answer. It will be retried later.';
       if (error.response?.status === 404) {
-        console.warn('Answer submission endpoint not found. Ensure backend has POST /api/student-courses/submit-answer route. Check server logs and restart if necessary.');
-        errorMessage = 'Answer submission failed due to missing endpoint. Answer cached for retry. Please contact support if this persists.';
-      } else if (error.response?.data?.message) {
-        errorMessage = `Failed to submit answer: ${error.response.data.message}`;
+        console.warn(`[${new Date().toISOString()}] [courseFeatures.js] Answer submission endpoint not found. Ensure backend has POST /api/student-courses/submit-answer route.`);
+        errorMessage = 'Answer submission failed due to missing endpoint. Answer cached for retry.';
+      } else if (error.response?.data?.error) {
+        errorMessage = `Failed to submit answer: ${error.response.data.error}`;
       }
       emit('show-message', errorMessage);
       pendingSubmissions.value.push(submission);
@@ -664,7 +744,7 @@ export function useCourseFeatures(props, emit) {
   }
 
   async function submitExam(isAutoSubmit = false) {
-    console.log('Submitting exam, isAutoSubmit:', isAutoSubmit);
+    console.log(`[${new Date().toISOString()}] [courseFeatures.js] Submitting exam, isAutoSubmit:`, isAutoSubmit);
     if (timerInterval.value) clearInterval(timerInterval.value);
     await retryPendingSubmissions();
     const allQuestions = [...questions.value.phase1, ...questions.value.phase2];
@@ -681,14 +761,14 @@ export function useCourseFeatures(props, emit) {
       isMalpractice: hasMalpractice.value,
     };
     if (!submissionData.studentId || !submissionData.courseId || !submissionData.answers.length) {
-      console.error('Invalid exam submission data:', submissionData);
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Invalid exam submission data:`, submissionData);
       emit('show-message', 'Invalid exam data. Please try again.');
       return;
     }
     try {
-      console.log('Sending exam submission to server:', submissionData);
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Sending exam submission to server:`, submissionData);
       const response = await retryOperation(() => api.post('/api/student-courses/submit-exam', submissionData));
-      console.log('Exam submission response:', response.data);
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Exam submission response:`, response.data);
       examResults.value = response.data.results || { marks: [], totalMarks: 0 };
       showResultsView.value = true;
       const courseIndex = props.courses.findIndex(c => c.id === selectedCourse.value?.id);
@@ -699,7 +779,6 @@ export function useCourseFeatures(props, emit) {
           hasMalpractice: hasMalpractice.value,
           hasExited: isAutoSubmit && examStatus.value[selectedCourse.value?.id] === 'You Have Exited from Exam',
         };
-        // Update examStatus explicitly
         if (!isAutoSubmit && !hasMalpractice.value) {
           examStatus.value[selectedCourse.value?.id] = 'Exam completed successfully';
         } else if (hasMalpractice.value) {
@@ -728,8 +807,8 @@ export function useCourseFeatures(props, emit) {
       removeMalpracticePrevention();
       clearCache();
     } catch (error) {
-      console.error('Error submitting exam:', error.response?.data || error.message);
-      emit('show-message', `Failed to submit exam: ${error.response?.data?.message || error.message}. Your answers are cached and will be retried.`);
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Error submitting exam:`, error.response?.data || error.message);
+      emit('show-message', `Failed to submit exam: ${error.response?.data?.error || error.message}. Your answers are cached and will be retried.`);
       pendingSubmissions.value.push(submissionData);
       saveAnswersToCache();
       isExamStarted.value = false;
@@ -747,18 +826,18 @@ export function useCourseFeatures(props, emit) {
         courseId: selectedCourse.value.id,
         type,
       });
-      console.log(`Malpractice logged: ${type}`);
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Malpractice logged: ${type}`);
     } catch (error) {
-      console.error('Error logging malpractice:', error.response?.data || error.message);
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Error logging malpractice:`, error.response?.data || error.message);
     }
   }
 
   function handleImageError(field, question = null) {
     if (field === 'studentPhoto') {
-      console.error('Failed to load student photo');
-      studentPhoto.value = null;
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Failed to load student photo`);
+      emit('show-message', 'Failed to load student photo. Proceeding without photo.');
     } else {
-      console.error(`Failed to load image for ${field}:`, question[field]);
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Failed to load image for ${field}:`, question[field]);
       question[field] = null;
     }
   }
@@ -792,7 +871,7 @@ export function useCourseFeatures(props, emit) {
     const detectCriticalActions = async (e) => {
       if (e.code === 'Escape' || e.code === 'F11') {
         e.preventDefault();
-        console.log('Detected Esc or F11 key press, logging as critical action');
+        console.log(`[${new Date().toISOString()}] [courseFeatures.js] Detected Esc or F11 key press, logging as critical action`);
         await logMalpractice('critical_action');
         handleMalpractice('other');
       }
@@ -809,7 +888,7 @@ export function useCourseFeatures(props, emit) {
           }
         }
       } catch (error) {
-        console.error('Error checking clipboard:', error);
+        console.error(`[${new Date().toISOString()}] [courseFeatures.js] Error checking clipboard:`, error);
       }
     };
     document.addEventListener('paste', detectClipboardImage);
@@ -872,17 +951,16 @@ export function useCourseFeatures(props, emit) {
   async function handleMalpractice(type) {
     malpracticeAttempts.value[type] = (malpracticeAttempts.value[type] || 0) + 1;
     const totalAttempts = Object.values(malpracticeAttempts.value).reduce((sum, count) => sum + count, 0);
-    console.log(`Malpractice attempt (${type}):`, malpracticeAttempts.value[type], 'Total attempts:', totalAttempts);
+    console.log(`[${new Date().toISOString()}] [courseFeatures.js] Malpractice attempt (${type}):`, malpracticeAttempts.value[type], 'Total attempts:', totalAttempts);
 
     if (malpracticeAttempts.value[type] === 1 || malpracticeAttempts.value[type] === 2) {
       showMalpracticeWarning.value = true;
-      console.log(`Warning: Suspicious ${type.replace('_', ' ')} detected (${malpracticeAttempts.value[type]}/2). Further attempts will lead to auto-evaluation.`);
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Warning: Suspicious ${type.replace('_', ' ')} detected (${malpracticeAttempts.value[type]}/2). Further attempts will lead to auto-evaluation.`);
     } else if (totalAttempts >= 3) {
       hasMalpractice.value = true;
       examStatus.value[selectedCourse.value?.id] = 'Your Exam Auto Evaluated';
-      console.log('Your Exam Auto Evaluated Due to Malpractice');
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Your Exam Auto Evaluated Due to Malpractice`);
 
-      // Log answers being sent for auto-evaluation
       const allQuestions = [...questions.value.phase1, ...questions.value.phase2];
       const answersToSubmit = allQuestions.map(question => ({
         questionId: question.id,
@@ -890,9 +968,8 @@ export function useCourseFeatures(props, emit) {
         status: questionStatuses.value[question.id] || 'default',
         startTime: examStartedAt.value,
       }));
-      console.log('Submitting answers for auto-evaluation due to malpractice:', answersToSubmit);
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Submitting answers for auto-evaluation due to malpractice:`, answersToSubmit);
 
-      // Update course status
       const courseIndex = props.courses.findIndex(c => c.id === selectedCourse.value?.id);
       if (courseIndex !== -1) {
         props.courses[courseIndex] = {
@@ -901,7 +978,6 @@ export function useCourseFeatures(props, emit) {
         };
       }
 
-      // Submit exam with malpractice flag
       await submitExam(true);
       saveAnswersToCache();
       goBackToCourses();
@@ -910,16 +986,16 @@ export function useCourseFeatures(props, emit) {
 
   function dismissMalpracticeWarning() {
     try {
-      console.log('Dismiss malpractice warning button clicked at', new Date().toISOString());
-      console.log('Current state before dismissal:', {
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Dismiss malpractice warning button clicked`);
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Current state before dismissal:`, {
         showMalpracticeWarning: showMalpracticeWarning.value,
         isExamPaused: isExamPaused.value,
         isExamStarted: isExamStarted.value,
       });
       showMalpracticeWarning.value = false;
       isExamPaused.value = false;
-      console.log('Malpractice warning dismissed');
-      console.log('State after dismissal:', {
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] Malpractice warning dismissed`);
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] State after dismissal:`, {
         showMalpracticeWarning: showMalpracticeWarning.value,
         isExamPaused: isExamPaused.value,
       });
@@ -927,8 +1003,8 @@ export function useCourseFeatures(props, emit) {
         startTimer();
       }
     } catch (error) {
-      console.error('Error dismissing malpractice warning:', error);
-      console.log('Failed to dismiss warning. Please try again.');
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Error dismissing malpractice warning:`, error);
+      emit('show-message', 'Failed to dismiss warning. Please try again.');
     }
   }
 
@@ -939,10 +1015,10 @@ export function useCourseFeatures(props, emit) {
         const elements = document.querySelectorAll('.mathjax-content');
         if (elements.length > 0) {
           await window.MathJax.typesetPromise([...elements]);
-          console.log('MathJax typesetting completed successfully');
+          console.log(`[${new Date().toISOString()}] [courseFeatures.js] MathJax typesetting completed successfully`);
         }
       } catch (error) {
-        console.error('MathJax typesetting error:', error);
+        console.error(`[${new Date().toISOString()}] [courseFeatures.js] MathJax typesetting error:`, error);
         mathJaxFailed.value = true;
         emit('show-message', 'Failed to render formulas. Displaying raw text.');
       }
@@ -960,7 +1036,7 @@ export function useCourseFeatures(props, emit) {
     script.async = true;
     script.onload = () => {
       mathJaxLoaded.value = true;
-      console.log('MathJax loaded successfully');
+      console.log(`[${new Date().toISOString()}] [courseFeatures.js] MathJax loaded successfully`);
       window.MathJax = {
         tex: {
           inlineMath: [['\\(', '\\)']],
@@ -975,9 +1051,9 @@ export function useCourseFeatures(props, emit) {
       nextTick(() => debouncedTypesetMathJax());
     };
     script.onerror = () => {
-      console.error(`Failed to load MathJax (attempt ${attempt})`);
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] Failed to load MathJax (attempt ${attempt})`);
       if (attempt < maxAttempts) {
-        console.log(`Retrying MathJax load (attempt ${attempt + 1})`);
+        console.log(`[${new Date().toISOString()}] [courseFeatures.js] Retrying MathJax load (attempt ${attempt + 1})`);
         setTimeout(() => loadMathJax(attempt + 1, maxAttempts), 1000);
       } else {
         mathJaxFailed.value = true;
@@ -1013,7 +1089,6 @@ export function useCourseFeatures(props, emit) {
     questions.value = { phase1: [], phase2: [] };
     selectedAnswers.value = {};
     questionStatuses.value = {};
-    studentPhoto.value = null;
     examResults.value = null;
     showResultsView.value = false;
     clearCache();
@@ -1021,17 +1096,18 @@ export function useCourseFeatures(props, emit) {
 
   onMounted(() => {
     if (!studentId.value) {
-      console.error('No student ID available');
+      console.error(`[${new Date().toISOString()}] [courseFeatures.js] No student ID available`);
       emit('show-message', 'Please log in to access your courses.');
       return;
     }
-    console.log('Student ID in Courses.vue:', studentId.value);
-    console.log('Initial courses prop:', props.courses);
+    console.log(`[${new Date().toISOString()}] [courseFeatures.js] Student ID in Courses.vue:`, studentId.value);
+    console.log(`[${new Date().toISOString()}] [courseFeatures.js] Initial courses prop:`, props.courses);
     initializeBaseUrl();
     loadMathJax();
     nextTick(() => {
       setupMutationObserver();
-      updateExamStatus();
+      // Rely on Dashboard.vue to fetch courses initially
+      // fetchCourses(); // Commented out to avoid duplicate fetch
     });
   });
 
@@ -1075,20 +1151,16 @@ export function useCourseFeatures(props, emit) {
     hasMalpractice,
     isDownloading,
     isRestricted,
+    isHallTicketRestricted,
     baseUrl,
-    studentPhoto,
     examResults,
     showResultsView,
-    canSubmit,
-    currentQuestion,
-    currentQuestionIndexInAll,
-    studentId,
     examStatus,
+    pendingSubmissions,
+    submittedAnswers,
     isExamPaused,
+    fetchCourses,
     attemptStartExam,
-    startExam,
-    startTimer,
-    formatTime,
     goBackToCourses,
     showExitModal,
     confirmExit,
@@ -1100,16 +1172,8 @@ export function useCourseFeatures(props, emit) {
     markForReview,
     submitAnswer,
     submitExam,
-    logMalpractice,
-    handleImageError,
-    setupMalpracticePrevention,
-    removeMalpracticePrevention,
-    handleMalpractice,
     dismissMalpracticeWarning,
-    typesetMathJax,
-    loadMathJax,
-    setupMutationObserver,
-    downloadHallTicketForStudent,
-    clearSessionData,
+    handleImageError,
+    formatTime
   };
 }

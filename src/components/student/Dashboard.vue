@@ -1,6 +1,6 @@
+```vue
 <template>
   <div class="flex h-screen bg-white text-gray-800 font-sans antialiased">
-    <!-- Sidebar -->
     <div v-if="!isExamActive" class="w-64 bg-white shadow-md flex flex-col border-r border-gray-200">
       <div class="p-6">
         <h1 class="text-2xl font-bold text-indigo-600">Student Dashboard</h1>
@@ -46,39 +46,30 @@
       </div>
     </div>
 
-    <!-- Main Content -->
     <div class="flex-1 overflow-y-auto" :class="{ 'p-6 md:p-10': !isExamActive, 'p-0': isExamActive }">
-      <!-- Loading State -->
       <div v-if="isLoading && !isExamActive" class="bg-white p-6 rounded-lg shadow-md border border-gray-200 text-center">
         <p class="text-gray-600">Loading...</p>
       </div>
-
-      <!-- Error State -->
       <div v-else-if="errorMessage && !isExamActive" class="bg-red-50 p-6 rounded-lg shadow-md border border-red-200">
         <p class="text-red-600">{{ errorMessage }}</p>
       </div>
-
-      <!-- Courses -->
       <Courses
         v-else-if="activeSection === 'courses'"
-        :courses="courses"
+        v-model:courses="courses"
         :is-exam-active="isExamActive"
-        :user="user"
+        :user="updatedUser"
         @show-message="showModal"
         @exam-status-changed="updateExamStatus"
         @toggle-dashboard="toggleDashboard"
       />
-
-      <!-- Profile -->
       <Profile
         v-else-if="activeSection === 'profile' && !isExamActive"
-        :user="user"
+        :user="updatedUser"
         @logout="handleLogout"
         @profile-updated="handleProfileUpdate"
       />
     </div>
 
-    <!-- Message Modal -->
     <div v-if="showMessageModal" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
       <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-200 max-w-md w-full text-gray-800">
         <h3 class="text-xl font-semibold text-red-600 mb-4 flex items-center">
@@ -104,7 +95,6 @@
       </div>
     </div>
 
-    <!-- Logout Confirmation Modal -->
     <div v-if="showLogoutModalFlag" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div class="bg-white p-6 rounded-xl shadow-lg flex flex-col items-center space-y-4 max-w-sm w-full">
         <ExclamationTriangleIcon class="w-12 h-12 text-yellow-500" />
@@ -168,67 +158,69 @@ export default {
       showLogoutModalFlag: false,
       profilePhoto: null,
       baseUrl: '',
+      updatedUser: null,
     };
   },
   methods: {
-    async fetchCourses() {
-      this.isLoading = true;
-      this.errorMessage = '';
+    async fetchUserDetails() {
       try {
         if (!this.user || !this.user.id) {
-          console.error('User ID is undefined or missing:', this.user);
-          throw new Error('Please log in to view your courses.');
+          throw new Error('User ID is missing');
         }
-        console.log(`Fetching courses for student ID: ${this.user.id}`);
         const baseURL = await apiConfig.getBaseURL();
-        const response = await axios.get(`${baseURL}/api/student-courses/${this.user.id}`);
-        console.log('Courses fetched:', response.data);
-        this.courses = response.data || [];
+        console.log(`[${new Date().toISOString()}] Fetching complete details from: ${baseURL}/api/student-courses/complete-details/${this.user.id}`);
+        const response = await axios.get(`${baseURL}/api/student-courses/complete-details/${this.user.id}`, { withCredentials: true });
+        const { student, courses } = response.data;
+        console.log('Received complete details:', { student, courses });
+
+        this.updatedUser = {
+          id: student.id,
+          name: student.name || 'Student',
+          registerNo: student.registerNo || `STU${student.id}`, // Fallback only if null
+          abcId: student.abcId || 'N/A', // Fallback only if null
+          role: 'student'
+        };
+        this.profilePhoto = student.photo ? `${baseURL}${student.photo}` : null; // Prepend baseURL for photo
+        this.courses = courses || [];
+        console.log('Updated user:', this.updatedUser);
+        console.log('Updated courses:', this.courses);
+
+        if (this.courses.length === 0) {
+          this.errorMessage = 'No courses assigned to you. Please contact the administrator.';
+        }
       } catch (error) {
-        console.error('Error fetching courses:', error.response ? error.response.data : error.message);
-        this.errorMessage = `Failed to fetch courses: ${error.response ? error.response.data.error : error.message}`;
-      } finally {
-        this.isLoading = false;
+        console.error('Error fetching complete details:', error.response ? error.response.data : error.message);
+        this.errorMessage = `Failed to fetch student details and courses: ${error.response ? error.response.data.error : error.message}`;
+        this.updatedUser = {
+          ...this.user,
+          registerNo: this.user.id ? `STU${this.user.id}` : '',
+          name: this.user.name || 'Student',
+          abcId: 'N/A',
+          role: 'student'
+        };
+        this.courses = [];
       }
     },
-    async fetchProfile() {
+    async validateSession() {
       try {
-        if (!this.user || !this.user.registerNo) {
-          throw new Error('No register number provided in user data.');
-        }
-        const registerNo = this.user.registerNo;
-        const url = `/api/student-profile/profile/${registerNo}`;
-        console.log('Fetching profile from:', `${this.baseUrl}${url}`);
-
-        const response = await axios.get(url, { withCredentials: true });
-        const data = response.data;
-
-        if (!data || typeof data !== 'object') {
-          throw new Error('Invalid profile data received from server');
-        }
-
-        this.profilePhoto = data.photo ? `${this.baseUrl}${data.photo}` : null;
-        console.log('Profile photo set to:', this.profilePhoto);
+        const baseURL = await apiConfig.getBaseURL();
+        const response = await axios.get(`${baseURL}/api/check-session`, { withCredentials: true });
+        console.log('Session validation response:', response.data);
+        return response.data.isAuthenticated && response.data.user.role === 'student';
       } catch (error) {
-        console.error('Error fetching profile in Dashboard:', error.response ? error.response.data : error.message);
-        this.errorMessage = `Failed to fetch profile: ${error.response ? error.response.data.error || error.message : error.message}`;
-        this.profilePhoto = null;
-      }
-    },
-    async updateBaseUrl() {
-      try {
-        const response = await axios.get('/api/config/base-url');
-        this.baseUrl = response.data.baseURL;
-        console.log('Base URL set to:', this.baseUrl);
-      } catch (error) {
-        console.error('Error fetching base URL:', error);
-        this.baseUrl = 'http://localhost:3000';
-        console.log('Using fallback base URL:', this.baseUrl);
+        console.error('Session validation failed:', error.response ? error.response.data : error.message);
+        return false;
       }
     },
     handleProfileUpdate(updatedProfile) {
       this.profilePhoto = updatedProfile.photo ? `${this.baseUrl}${updatedProfile.photo}` : null;
       console.log('Profile updated, photo set to:', this.profilePhoto);
+      if (updatedProfile.registerNo) {
+        this.updatedUser.registerNo = updatedProfile.registerNo;
+      }
+      if (updatedProfile.name) {
+        this.updatedUser.name = updatedProfile.name;
+      }
     },
     handleImageError() {
       console.error('Failed to load profile photo in sidebar');
@@ -256,7 +248,7 @@ export default {
     },
     toggleDashboard(isExamActive) {
       this.isExamActive = isExamActive;
-      console.log('Dashboard visibility toggled, isExamActive:', isExamActive);
+      console.log('Dashboard visibility toggled, isExamActive:', this.isExamActive);
     },
     showLogoutModal() {
       this.showLogoutModalFlag = true;
@@ -267,12 +259,15 @@ export default {
     },
     async handleLogout() {
       try {
-        const response = await axios.post('/api/logout', {}, { withCredentials: true });
+        const baseURL = await apiConfig.getBaseURL();
+        console.log(`[${new Date().toISOString()}] Attempting logout via: ${baseURL}/api/logout`);
+        const response = await axios.post(`${baseURL}/api/logout`, {}, { withCredentials: true });
         console.log('Logout response:', response.data);
         localStorage.removeItem('user');
         this.courses = [];
         this.profilePhoto = null;
         this.isExamActive = false;
+        this.updatedUser = null;
         this.$emit('logout');
         this.$router.push('/');
       } catch (error) {
@@ -288,14 +283,30 @@ export default {
     },
   },
   async created() {
-    await this.updateBaseUrl();
-    console.log('User:', this.user);
+    console.log('Dashboard created, user:', this.user);
     if (!this.user || !this.user.id) {
       console.error('User data incomplete:', this.user);
       this.errorMessage = 'Please log in to access your dashboard.';
-    } else {
-      await this.fetchCourses();
-      await this.fetchProfile();
+      this.$router.push('/');
+      return;
+    }
+    this.isLoading = true;
+    try {
+      const baseURL = await apiConfig.getBaseURL();
+      this.baseUrl = baseURL; // Store baseURL for photo URL construction
+      const isSessionValid = await this.validateSession();
+      if (!isSessionValid) {
+        console.error('Session is invalid or user is not a student');
+        this.errorMessage = 'Session expired or invalid. Please log in again.';
+        await this.handleLogout();
+        return;
+      }
+      await this.fetchUserDetails();
+    } catch (error) {
+      console.error('Error during dashboard initialization:', error);
+      this.errorMessage = 'Failed to initialize dashboard. Please try again.';
+    } finally {
+      this.isLoading = false;
     }
   },
 };
@@ -305,15 +316,12 @@ export default {
 .font-sans {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
 }
-
 .transition-all {
   transition: all 0.2s ease-in-out;
 }
-
 button:hover {
   transform: translateY(-1px);
 }
-
 @media (max-width: 768px) {
   .p-6 {
     padding: 1rem;
