@@ -1,6 +1,6 @@
 // apiConfig.js
 const getBaseURL = () => {
-  const SERVER_URL = 'https://mooc-backend-1wg6.onrender.com';
+  const SERVER_URL = 'https://backend-a5iy.onrender.com';
   const LOCAL_URL = 'http://localhost:3000';
 
   if (process.env.NODE_ENV === 'production') {
